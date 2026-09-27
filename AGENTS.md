@@ -84,6 +84,12 @@ access). Useful lookups:
   `better-news-<hash>-<team>.vercel.app` are behind Vercel SSO and will
   redirect instead of serving the app directly.
 
+Vercel is configured to auto-deploy the latest commit on `main` — pushing
+to `main` is enough to ship, no manual deploy step needed. That only
+updates the deployed code, though; it does not run ingestion, so a
+`feeds.config.ts` change still needs a manual trigger or a cron tick before
+new sources show up (see above).
+
 To manually trigger a production ingest run (e.g. right after deploying a
 `feeds.config.ts` change, without waiting for the next cron tick):
 
