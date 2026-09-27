@@ -1,0 +1,19 @@
+name: Ingest feeds
+
+on:
+  schedule:
+    # Cadence lives here — edit this cron expression to change it.
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call ingest endpoint
+        run: |
+          curl -sf -X GET "${APP_URL}/api/ingest" \
+            -H "Authorization: Bearer ${CRON_SECRET}"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
