@@ -39,22 +39,19 @@ function extractImage(item: Record<string, unknown>): string | null {
   return null;
 }
 
-export function parseRssFeed(xml: string): ParsedFeedItem[] {
-  const parsed = parser.parse(xml);
-  const channel = parsed?.rss?.channel;
-  if (!channel) return [];
+function toDate(raw: string | null): Date | null {
+  if (!raw) return null;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
-  const rawItems = Array.isArray(channel.item) ? channel.item : channel.item ? [channel.item] : [];
-
+function parseItems(rawItems: Record<string, unknown>[]): ParsedFeedItem[] {
   return rawItems
-    .map((item: Record<string, unknown>): ParsedFeedItem | null => {
+    .map((item): ParsedFeedItem | null => {
       const link = firstString(item.link);
       const guid = firstString(item.guid) ?? link;
       const title = firstString(item.title);
       if (!guid || !link || !title) return null;
-
-      const pubDateRaw = firstString(item.pubDate);
-      const publishedAt = pubDateRaw ? new Date(pubDateRaw) : null;
 
       return {
         guid,
@@ -62,8 +59,81 @@ export function parseRssFeed(xml: string): ParsedFeedItem[] {
         link,
         summary: firstString(item.description),
         imageUrl: extractImage(item),
-        publishedAt: publishedAt && !Number.isNaN(publishedAt.getTime()) ? publishedAt : null,
+        publishedAt: toDate(firstString(item.pubDate)),
       };
     })
-    .filter((item: ParsedFeedItem | null): item is ParsedFeedItem => item !== null);
+    .filter((item): item is ParsedFeedItem => item !== null);
+}
+
+// RSS 1.0/RDF: <rdf:RDF><channel>...</channel><item rdf:about="..."><title/>
+// <link/><description/><dc:date/></item>...</rdf:RDF> — items are siblings
+// of <channel>, not nested inside it, and dates use Dublin Core (dc:date).
+function parseRdfFeed(rdf: Record<string, unknown>): ParsedFeedItem[] {
+  const rawItems = Array.isArray(rdf.item) ? rdf.item : rdf.item ? [rdf.item] : [];
+
+  return (rawItems as Record<string, unknown>[])
+    .map((item): ParsedFeedItem | null => {
+      const link = firstString(item.link);
+      const guid = firstString(item["@_rdf:about"]) ?? link;
+      const title = firstString(item.title);
+      if (!guid || !link || !title) return null;
+
+      return {
+        guid,
+        title,
+        link,
+        summary: firstString(item.description),
+        imageUrl: extractImage(item),
+        publishedAt: toDate(firstString(item["dc:date"])),
+      };
+    })
+    .filter((item): item is ParsedFeedItem => item !== null);
+}
+
+// Atom: <feed><entry><title/><link href=".."/><id/><summary|content/>
+// <published|updated/></entry></feed> — link is an attribute, not text.
+function parseAtomFeed(feed: Record<string, unknown>): ParsedFeedItem[] {
+  const rawEntries = Array.isArray(feed.entry) ? feed.entry : feed.entry ? [feed.entry] : [];
+
+  return (rawEntries as Record<string, unknown>[])
+    .map((entry): ParsedFeedItem | null => {
+      const rawLink = entry.link as
+        | Record<string, string>
+        | Record<string, string>[]
+        | undefined;
+      const links = Array.isArray(rawLink) ? rawLink : rawLink ? [rawLink] : [];
+      const link =
+        links.find((l) => l["@_rel"] === "alternate")?.["@_href"] ?? links[0]?.["@_href"] ?? null;
+      const guid = firstString(entry.id) ?? link;
+      const title = firstString(entry.title);
+      if (!guid || !link || !title) return null;
+
+      return {
+        guid,
+        title,
+        link,
+        summary: firstString(entry.summary) ?? firstString(entry.content),
+        imageUrl: extractImage(entry),
+        publishedAt: toDate(firstString(entry.published) ?? firstString(entry.updated)),
+      };
+    })
+    .filter((item): item is ParsedFeedItem => item !== null);
+}
+
+export function parseRssFeed(xml: string): ParsedFeedItem[] {
+  const parsed = parser.parse(xml);
+
+  const channel = parsed?.rss?.channel;
+  if (channel) {
+    const rawItems = Array.isArray(channel.item) ? channel.item : channel.item ? [channel.item] : [];
+    return parseItems(rawItems);
+  }
+
+  const rdf = parsed?.["rdf:RDF"];
+  if (rdf) return parseRdfFeed(rdf);
+
+  const feed = parsed?.feed;
+  if (feed) return parseAtomFeed(feed);
+
+  return [];
 }
