@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Call ingest endpoint
         run: |
-          curl -sf -X GET "${APP_URL}/api/ingest" \
+          curl -sfL -X GET "${APP_URL}/api/ingest" \
             -H "Authorization: Bearer ${CRON_SECRET}"
         env:
           APP_URL: ${{ secrets.APP_URL }}
