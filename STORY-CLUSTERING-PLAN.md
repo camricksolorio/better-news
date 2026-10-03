@@ -234,6 +234,17 @@ summary_evals
   faithfulness, coverage, neutrality (1–5), unsupported_claims jsonb
 ```
 
+**No index on `stories.centroid` (decided 2026-10-03).** Candidate lookup is
+a kNN over *articles* (`feed_items.embedding`, HNSW), and the centroid is only
+used to score the handful of candidate stories that come back, which is an
+exact cosine calculation with no index involved. Open stories are bounded by
+the 36h window (a few hundred rows), so even a scan would be milliseconds, and
+centroids are rewritten on every join, so an index would add write cost for no
+read benefit. Instead, add a btree on `stories (status, window_ends_at)` for
+the open-story filter. Revisit only if the v1.1 merge pass or a
+centroid-first candidate lookup ends up searching centroids by nearest
+neighbor.
+
 **Migrations:** the repo currently uses `db:push` with no `drizzle/`
 migrations folder. `push` can't create the extension, and handles an HNSW
 index awkwardly. Switch to `db:generate` + `db:migrate`, with a custom SQL
