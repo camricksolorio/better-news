@@ -64,15 +64,15 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 
 **Pipeline plumbing**
 
-- [ ] Single-flight lease helper (D22) on `pipeline_locks`: take, extend after each batch, release, expires on its own
-  - [ ] Tests: a second take while held is refused; an expired lease can be taken; the lease is extended per batch
-- [ ] `pipeline_runs` recorder: one row per run (stage, started/finished, processed, remaining, failed, error)
+- [x] Single-flight lease helper (D22) on `pipeline_locks`: take, extend after each batch, release, expires on its own
+  - [x] Tests: a second take while held is refused; an expired lease can be taken; the lease is extended per batch
+- [x] `pipeline_runs` recorder: one row per run (stage, started/finished, processed, remaining, failed, error)
 
 **Embedding (the `/api/embed` stage logic, D27)**
 
-- [ ] `lib/pipeline/embed.ts`: select ingested rows (`embedding IS NULL`, `embed_next_attempt_at` null or past, oldest first), build the input `"task: clustering | query: " + title + "\n\n" + cleanSummary.slice(0, 1000)`, embed in batches of 25 with `gemini-embedding-2`, and write `embedding`, `embedding_model`, and `embedding_input_version` in one `UPDATE` per batch; a batch that exhausts its retries sets `embed_attempts + 1`, `embed_error`, and `embed_next_attempt_at = now() + min(1h × 2^attempts, 12h)`; rows with 5 attempts are left out
-  - [ ] Tests: a successful batch writes all three columns; a failing batch increments attempts, records the error, and sets the next attempt without affecting other batches; a row with 5 attempts is not selected; a row whose next attempt is in the future is not selected; re-running is a no-op
-- [ ] Embed backfill script that runs this logic over all existing rows
+- [x] `lib/pipeline/embed.ts`: select ingested rows (`embedding IS NULL`, `embed_next_attempt_at` null or past, oldest first), build the input `"task: clustering | query: " + title + "\n\n" + cleanSummary.slice(0, 1000)`, embed in batches of 25 with `gemini-embedding-2`, and write `embedding`, `embedding_model`, and `embedding_input_version` in one `UPDATE` per batch; a batch that exhausts its retries sets `embed_attempts + 1`, `embed_error`, and `embed_next_attempt_at = now() + min(1h × 2^attempts, 12h)`; rows with 5 attempts are left out
+  - [x] Tests: a successful batch writes all three columns; a failing batch increments attempts, records the error, and sets the next attempt without affecting other batches; a row with 5 attempts is not selected; a row whose next attempt is in the future is not selected; re-running is a no-op
+- [~] Embed backfill script that runs this logic over all existing rows (`pnpm embed:backfill`, written and smoke-tested against the test database; not yet run against production, which first needs the migrations applied)
 - [ ] Exit: all rows embedded; costs visible in `llm_calls`; invalid states rejected by the database
 
 ### Phase 2 — Baseline clustering

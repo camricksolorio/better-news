@@ -11,7 +11,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "embed:backfill": "tsx --env-file=.env --tsconfig tsconfig.json scripts/embed-backfill.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",
