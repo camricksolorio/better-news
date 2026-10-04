@@ -81,8 +81,8 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 
 **Assignment**
 
-- [ ] `lib/pipeline/*`: embedding-only assignment (reads only embedded rows whose `embedding_model` matches the configured model, and never calls the embedding API), window-fit candidates (`last_article_at − 36h ≤ published_at ≤ first_article_at + 36h`, open or closed stories), max-member + centroid scoring, earlier-than-anchor handling, close sweep
-  - [ ] Tests: a later article within 36h of `first_article_at` joins and one beyond it doesn't; a first-to-last span never exceeds 36h; chaining case (A~B, B~C, A≁C) does not merge; a late article that fits a closed story joins it; an article earlier than `first_article_at` joins and moves the anchor back only if every member still fits, otherwise starts a new story; centroid running mean; an older article that is embedded and clustered after newer ones still joins the right story (out-of-order arrival, D28); rows embedded with a different model are ignored
+- [x] `lib/pipeline/*`: embedding-only assignment (reads only embedded rows whose `embedding_model` matches the configured model, and never calls the embedding API), window-fit candidates (`last_article_at − 36h ≤ published_at ≤ first_article_at + 36h`, open or closed stories), max-member + centroid scoring, earlier-than-anchor handling, close sweep
+  - [x] Tests: a later article within 36h of `first_article_at` joins and one beyond it doesn't; a first-to-last span never exceeds 36h; chaining case (A~B, B~C, A≁C) does not merge; a late article that fits a closed story joins it; an article earlier than `first_article_at` joins and moves the anchor back only if every member still fits, otherwise starts a new story; centroid running mean; an older article that is embedded and clustered after newer ones still joins the right story (out-of-order arrival, D28); rows embedded with a different model are ignored
 
 **Admin and labeling**
 
