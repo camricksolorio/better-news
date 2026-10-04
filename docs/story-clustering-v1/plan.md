@@ -21,7 +21,7 @@ Checked 2026-09-27 against the live environment (eval data, volume, and prices r
 | Eval data | ✅ 6,200 rows from all 31 sources, ingested 2026-09-27 to 2026-10-03. Full days: 2026-09-29 to 2026-10-02 (~950–1,240 articles/day, ~4,300 total), which meets the ≥ 4-day gate. 9/27 is partial and 9/28 is nearly empty (the cron's redirect bug, fixed 2026-09-29), so the snapshot starts at 2026-09-29. Volume is ~1,000 articles/day, not the 150–400 first assumed |
 | Gemini billing tier | ✅ **Free tier** (confirmed). Expect per-minute and per-day request caps; the exact limits are looked up in Phase 1. Prompts may be used for training, which is fine for public news |
 | Model prices | ✅ Looked up 2026-10-03 (see the TDD's LLM client section). Enter them in the config price table in Phase 1 |
-| Supabase backups | ❓ Not checked. `feed_items` can't be re-fetched from the feeds, so Phase 1 checks what the plan's backups cover |
+| Supabase backups | ⚠️ Checked 2026-10-04: the org is on the **free plan**, which has no downloadable or point-in-time backups (paid plans add daily backups). `feed_items` can't be re-fetched from the feeds, so Phase 1 adds a periodic export |
 
 **Verdict: ready to execute.** Confirmed 2026-09-27: free tier, defaults
 approved (opinion/analysis = same story, 36h window, ship-bar numbers), and
@@ -50,7 +50,7 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 - [x] Add schema: new `feed_items` columns (`embedding vector(768)`, `embedding_model`, `embedding_input_version`, `embed_attempts`, `embed_error`, `embed_next_attempt_at`, `story_id`, `clustered_at`, `canonical_link`) + HNSW index (`vector_cosine_ops`); `stories` with btrees on `(status, window_ends_at)` (close sweep) and `(first_article_at, last_article_at)` (window fit), and no index on `centroid`; `story_assignments`; `llm_calls`; `eval_pair_labels`; `pipeline_locks`; `pipeline_runs`
 - [x] Add database invariants (D24): `CHECK` constraints on `feed_items` (`clustered_at IS NULL OR (embedding IS NOT NULL AND story_id IS NOT NULL)`; `embedding IS NULL OR (embedding_model IS NOT NULL AND embedding_input_version IS NOT NULL)`) and `stories` (`status IN ('open','closed')`; `first_article_at <= last_article_at`; `window_ends_at >= last_article_at`); a trigger that rejects `closed` → `open`; a trigger that rejects `UPDATE` and `DELETE` on `story_assignments`
   - [x] Tests: each violating insert/update is rejected; a closed story can't be reopened; `story_assignments` rows can't be updated or deleted
-- [ ] Check what backups the Supabase plan provides for `feed_items`; if limited, add a periodic `feed_items` export
+- [~] Check what backups the Supabase plan provides for `feed_items`; if limited, add a periodic `feed_items` export Finding: free plan, no backups. Remaining: build the periodic `feed_items` export (not started; decide where it is stored)
 
 **Text and LLM client**
 
@@ -59,7 +59,7 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 - [x] `lib/llm.ts`: `chat` + `embed` (embeddings via the OpenAI-compatible endpoint with `dimensions: 768`, up to 100 inputs per request, 25 by default), `llm_calls` row per call, OpenRouter fallback for chat, verdict cache (verdict cache is stored on `llm_calls` as `cache_key` + `response`)
 - [x] `lib/llm.ts` failure policy (D23): timeouts (20s embedding, 30s chat), retries (up to 4 attempts, exponential backoff with jitter, bounded by the time left before the deadline), a per-provider, per-run circuit breaker (opens after 3 consecutive failures; chat falls back to OpenRouter; an embedding run ends early), and a batch is never dropped silently (retried, or its rows stay unprocessed for the next run)
   - [~] Tests: retry/backoff with jitter stays within bounds; the breaker opens after 3 consecutive failures and then fails fast; chat falls back and the fallback is logged; embedding ends the run early with rows left unprocessed (`embedding` null); no new batch starts after the deadline; cost computed from the price table; a cache hit makes no call (done except "embedding ends the run early with rows left unprocessed", which is covered in the embed stage tests)
-- [ ] Look up the AI Studio free-tier request limits for `gemini-embedding-2` and `gemini-3.5-flash-lite`; compare with ~1,000 embeds and ~200–350 adjudication calls/day
+- [~] Look up the AI Studio free-tier request limits for `gemini-embedding-2` and `gemini-3.5-flash-lite`; compare with ~1,000 embeds and ~200–350 adjudication calls/day Google no longer publishes the numbers in its docs; they are only shown in the AI Studio rate-limit dashboard, so the user needs to read them there
 - [x] Fill the config price table with the prices in the TDD (`gemini-embedding-2`, `gemini-3.5-flash-lite`)
 
 **Pipeline plumbing**
