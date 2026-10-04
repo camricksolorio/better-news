@@ -125,6 +125,18 @@ describe("scoring", () => {
   });
 });
 
+describe("ties", () => {
+  it("an exact tie goes to the bigger story, regardless of candidate order", async () => {
+    const store = createMemoryStore();
+    const big = await assignArticle(store, article(0, 0), cfg);
+    await assignArticle(store, article(20, 0), cfg);
+    const small = await assignArticle(store, article(-20, 0), cfg); // too early to join: its own story
+    expect(small.storyId).not.toBe(big.storyId);
+    const out = await assignArticle(store, article(-10, 0), cfg); // fits both, identical score
+    expect(out.storyId).toBe(big.storyId);
+  });
+});
+
 describe("gray zone and thin articles", () => {
   const gray = 30; // cos 30deg = 0.866: between T_low and T_high
 

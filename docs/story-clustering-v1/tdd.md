@@ -193,7 +193,7 @@ flowchart TD
 Articles are processed in `published_at` order.
 
 1. **Candidates:** pgvector kNN (top 10 by cosine similarity) over clustered articles whose story's window fits this article's `published_at` (the rule above), whether the story is `open` or `closed`, using the HNSW index on `feed_items.embedding`.
-2. **Score each candidate story** by (a) the article's max similarity to the story's members and (b) its similarity to the story centroid, an exact cosine calculation with no index. It must pass on **both** to join, so a candidate's score is the lower of the two, and the highest-scoring candidate is the one the bands apply to. The implementation is one shared core (`lib/pipeline/assign.ts`) over a store interface, with a database store for `/api/cluster` and an in-memory store for the eval replay harness, so the harness measures the same logic production runs.
+2. **Score each candidate story** by (a) the article's max similarity to the story's members and (b) its similarity to the story centroid, an exact cosine calculation with no index. It must pass on **both** to join, so a candidate's score is the lower of the two, and the highest-scoring candidate is the one the bands apply to. Exact ties (common with wire stories) go to the bigger story, then the older one, then by id, so a run never depends on row order. The implementation is one shared core (`lib/pipeline/assign.ts`) over a store interface, with a database store for `/api/cluster` and an in-memory store for the eval replay harness, so the harness measures the same logic production runs.
 3. **Decide by band** (starting thresholds, tuned in eval):
 
    | Best score | Action |

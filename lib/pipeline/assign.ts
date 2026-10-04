@@ -103,6 +103,17 @@ export function candidateScore(c: Candidate): number {
   return Math.min(c.topScore, c.centroidScore);
 }
 
+// Highest score first. Exact ties (identical wire stories are common) break deterministically:
+// the bigger story, then the older one, then id, so a run never depends on row order.
+export function compareCandidates(a: Candidate, b: Candidate): number {
+  return (
+    candidateScore(b) - candidateScore(a) ||
+    b.story.articleCount - a.story.articleCount ||
+    a.story.firstAt.getTime() - b.story.firstAt.getTime() ||
+    a.story.id.localeCompare(b.story.id)
+  );
+}
+
 export function nextStoryState(story: StoryState, article: ArticleInput, windowHours: number, newSource: boolean): StoryState {
   const n = story.articleCount;
   const centroid = story.centroid.map((v, i) => (v * n + article.embedding[i]) / (n + 1));
@@ -129,7 +140,7 @@ export async function assignArticle(
   adjudicate?: Adjudicator,
 ): Promise<Outcome> {
   const candidates = await store.candidates(article, cfg);
-  const best = [...candidates].sort((a, b) => candidateScore(b) - candidateScore(a))[0];
+  const best = [...candidates].sort(compareCandidates)[0];
   const scores = best
     ? { topScore: best.topScore, centroidScore: best.centroidScore }
     : { topScore: null, centroidScore: null };
