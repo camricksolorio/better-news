@@ -86,8 +86,8 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 
 **Admin and labeling**
 
-- [ ] `ADMIN_SECRET` in `.env.example`, local `.env`, Vercel; `proxy.ts` gate + sign-in page; re-check in every admin action and route
-  - [ ] Tests: unauthenticated request to an admin route is rejected even when the proxy is bypassed
+- [~] `ADMIN_SECRET` in `.env.example`, local `.env`, Vercel; `proxy.ts` gate + sign-in page; re-check in every admin action and route (done: `.env.example`, local `.env`, `proxy.ts` gate, sign-in page, `requireAdmin()` on pages and actions; remaining: set `ADMIN_SECRET` on Vercel, which is the user's call)
+  - [x] Tests: unauthenticated request to an admin route is rejected even when the proxy is bypassed
 - [ ] Labeling UI (`s` / `r` / `d` / `u`, definition pinned)
 - [ ] `scripts/export-labels.ts` and a matching import script (D26): export `eval_pair_labels` and `manual` assignments, keyed by article `guid`, to `eval/labels-YYYY-MM-DD.jsonl`
   - [ ] Tests: export then import into an empty database restores the same labels and manual assignments
