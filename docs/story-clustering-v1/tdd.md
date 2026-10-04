@@ -221,7 +221,7 @@ The design leaves room for the future event layer: stories get no `event_id` col
   - **Circuit breaker, per provider and per run:** after 3 consecutive failures (429 or 5xx) that exhaust retries, the breaker opens and further calls to that provider fail fast for the rest of the run. Chat calls fall back to OpenRouter. Embedding calls have no fallback, so the embed run ends early and its rows wait for the next run; clustering is unaffected. The breaker resets at the start of each run.
 - **Prices (config price table; paid standard tier, looked up 2026-10-03; free tier is $0):** `gemini-embedding-2` $0.20 per 1M input tokens; `gemini-3.5-flash-lite` $0.30 per 1M input and $2.50 per 1M output tokens (output includes thinking tokens). Batch pricing for both is half the standard rate.
 - **Accounting:** every call writes a row to `llm_calls` (purpose, provider, model, tokens in/out, estimated cost from a price table in config (see below), latency, ok/error, related story/article id).
-- **Verdict cache:** keyed on `(article_id, story_member_ids, model, prompt_version)`, so eval sweeps and re-runs don't pay twice.
+- **Verdict cache:** keyed on `(article_id, story_member_ids, model, prompt_version)`, so eval sweeps and re-runs don't pay twice. Stored on the `llm_calls` row itself (`cache_key`, `response`); the newest successful row with a matching key is a hit.
 
 #### 5. Data model
 
@@ -272,7 +272,8 @@ story_assignments      -- append-only decision log
 llm_calls
   id, created_at, purpose, provider, model,
   input_tokens, output_tokens, cost_usd, latency_ms, ok, error,
-  story_id, article_id
+  story_id, article_id,
+  cache_key, response   -- verdict cache: a chat call with a cache key stores its parsed response; same key later => no call
 
 eval_pair_labels
   article_a, article_b,

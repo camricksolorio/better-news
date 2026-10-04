@@ -84,21 +84,28 @@ export const feedItems = pgTable(
   ],
 );
 
-export const llmCalls = pgTable("llm_calls", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  purpose: text("purpose").notNull(),
-  provider: text("provider").notNull(),
-  model: text("model").notNull(),
-  inputTokens: integer("input_tokens"),
-  outputTokens: integer("output_tokens"),
-  costUsd: doublePrecision("cost_usd"),
-  latencyMs: integer("latency_ms"),
-  ok: boolean("ok").notNull(),
-  error: text("error"),
-  storyId: uuid("story_id").references(() => stories.id),
-  articleId: uuid("article_id").references(() => feedItems.id),
-});
+export const llmCalls = pgTable(
+  "llm_calls",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    purpose: text("purpose").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costUsd: doublePrecision("cost_usd"),
+    latencyMs: integer("latency_ms"),
+    ok: boolean("ok").notNull(),
+    error: text("error"),
+    storyId: uuid("story_id").references(() => stories.id),
+    articleId: uuid("article_id").references(() => feedItems.id),
+    // Verdict cache (D13): chat calls with a cache key store their parsed response here.
+    cacheKey: text("cache_key"),
+    response: jsonb("response"),
+  },
+  (table) => [index("llm_calls_cache_key_idx").on(table.cacheKey)],
+);
 
 // Append-only decision log (D10, D24); a trigger rejects UPDATE and DELETE.
 export const storyAssignments = pgTable(

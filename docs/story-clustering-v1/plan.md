@@ -54,13 +54,13 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 
 **Text and LLM client**
 
-- [ ] `lib/text.ts`: HTML/entity stripping, whitespace collapse, boilerplate removal, canonical-link dedupe
-  - [ ] Tests: HTML/entities, boilerplate strings ("Continue reading…", "The post X appeared first on Y"), utm stripping, same article in two feeds dedupes
-- [ ] `lib/llm.ts`: `chat` + `embed` (embeddings via the OpenAI-compatible endpoint with `dimensions: 768`, up to 100 inputs per request, 25 by default), `llm_calls` row per call, OpenRouter fallback for chat, verdict cache
-- [ ] `lib/llm.ts` failure policy (D23): timeouts (20s embedding, 30s chat), retries (up to 4 attempts, exponential backoff with jitter, bounded by the time left before the deadline), a per-provider, per-run circuit breaker (opens after 3 consecutive failures; chat falls back to OpenRouter; an embedding run ends early), and a batch is never dropped silently (retried, or its rows stay unprocessed for the next run)
-  - [ ] Tests: retry/backoff with jitter stays within bounds; the breaker opens after 3 consecutive failures and then fails fast; chat falls back and the fallback is logged; embedding ends the run early with rows left unprocessed (`embedding` null); no new batch starts after the deadline; cost computed from the price table; a cache hit makes no call
+- [x] `lib/text.ts`: HTML/entity stripping, whitespace collapse, boilerplate removal, canonical-link dedupe
+  - [x] Tests: HTML/entities, boilerplate strings ("Continue reading…", "The post X appeared first on Y"), utm stripping, same article in two feeds dedupes
+- [x] `lib/llm.ts`: `chat` + `embed` (embeddings via the OpenAI-compatible endpoint with `dimensions: 768`, up to 100 inputs per request, 25 by default), `llm_calls` row per call, OpenRouter fallback for chat, verdict cache (verdict cache is stored on `llm_calls` as `cache_key` + `response`)
+- [x] `lib/llm.ts` failure policy (D23): timeouts (20s embedding, 30s chat), retries (up to 4 attempts, exponential backoff with jitter, bounded by the time left before the deadline), a per-provider, per-run circuit breaker (opens after 3 consecutive failures; chat falls back to OpenRouter; an embedding run ends early), and a batch is never dropped silently (retried, or its rows stay unprocessed for the next run)
+  - [~] Tests: retry/backoff with jitter stays within bounds; the breaker opens after 3 consecutive failures and then fails fast; chat falls back and the fallback is logged; embedding ends the run early with rows left unprocessed (`embedding` null); no new batch starts after the deadline; cost computed from the price table; a cache hit makes no call (done except "embedding ends the run early with rows left unprocessed", which is covered in the embed stage tests)
 - [ ] Look up the AI Studio free-tier request limits for `gemini-embedding-2` and `gemini-3.5-flash-lite`; compare with ~1,000 embeds and ~200–350 adjudication calls/day
-- [ ] Fill the config price table with the prices in the TDD (`gemini-embedding-2`, `gemini-3.5-flash-lite`)
+- [x] Fill the config price table with the prices in the TDD (`gemini-embedding-2`, `gemini-3.5-flash-lite`)
 
 **Pipeline plumbing**
 
