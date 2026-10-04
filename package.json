@@ -14,7 +14,9 @@
     "test:watch": "vitest",
     "embed:backfill": "tsx --env-file=.env --tsconfig tsconfig.json scripts/embed-backfill.ts",
     "labels:export": "tsx --env-file=.env --tsconfig tsconfig.json scripts/export-labels.ts",
-    "labels:import": "tsx --env-file=.env --tsconfig tsconfig.json scripts/import-labels.ts"
+    "labels:import": "tsx --env-file=.env --tsconfig tsconfig.json scripts/import-labels.ts",
+    "eval:snapshot": "tsx --env-file=.env --tsconfig tsconfig.json scripts/snapshot.ts",
+    "eval:cluster": "tsx --tsconfig tsconfig.json scripts/eval-cluster.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",

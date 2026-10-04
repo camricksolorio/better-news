@@ -89,15 +89,15 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 - [~] `ADMIN_SECRET` in `.env.example`, local `.env`, Vercel; `proxy.ts` gate + sign-in page; re-check in every admin action and route (done: `.env.example`, local `.env`, `proxy.ts` gate, sign-in page, `requireAdmin()` on pages and actions; remaining: set `ADMIN_SECRET` on Vercel, which is the user's call)
   - [x] Tests: unauthenticated request to an admin route is rejected even when the proxy is bypassed
 - [ ] Labeling UI (`s` / `r` / `d` / `u`, definition pinned)
-- [ ] `scripts/export-labels.ts` and a matching import script (D26): export `eval_pair_labels` and `manual` assignments, keyed by article `guid`, to `eval/labels-YYYY-MM-DD.jsonl`
-  - [ ] Tests: export then import into an empty database restores the same labels and manual assignments
+- [~] `scripts/export-labels.ts` and a matching import script (D26): export `eval_pair_labels` and `manual` assignments, keyed by article `guid`, to `eval/labels-YYYY-MM-DD.jsonl` Done for `eval_pair_labels` (`pnpm labels:export` / `pnpm labels:import`, tested). Remaining: `manual` assignments, which have no producer until the Phase 4 "doesn't belong" action
+  - [~] Tests: export then import into an empty database restores the same labels and manual assignments (pair labels only)
 
 **Evaluation**
 
-- [ ] `scripts/snapshot.ts` → `eval/snapshot-YYYY-MM-DD.jsonl`
+- [~] `scripts/snapshot.ts` → `eval/snapshot-YYYY-MM-DD.jsonl` (written and type-checked; not run, because it needs the production database embedded first)
 - [ ] Generate ~300 stratified pairs (oversample likely `related`); silver-label via OpenRouter; human review of disagreements + ~50 random; export the labels
-- [ ] `pnpm eval:cluster` replay harness: pairwise P/R/F1, related-leak, LLM-band %, cost per 100 articles, worst merges/splits
-  - [ ] Tests: metrics on a tiny hand-built labeled fixture, with `related` counted as negative
+- [x] `pnpm eval:cluster` replay harness: pairwise P/R/F1, related-leak, LLM-band %, cost per 100 articles, worst merges/splits (cost per 100 articles is added in Phase 3 with the adjudicator; the baseline makes no LLM calls)
+  - [x] Tests: metrics on a tiny hand-built labeled fixture, with `related` counted as negative
 
 **Open-risk spikes**
 
