@@ -4,7 +4,7 @@
 |---|---|
 | **Author** | Claude (Sonnet 5.5), with Camrick Solorio |
 | **Created** | 2026-09-27 |
-| **Updated** | 2026-10-03 |
+| **Updated** | 2026-10-04 |
 | **Status** | Ready for review |
 | **References** | PRD: None (intent is captured in the TL;DR below) · Plan: [plan.md](plan.md) · Follow-on feature: [story-summary-v1](../story-summary-v1/tdd.md) |
 
@@ -47,23 +47,25 @@ Judgments are three-way: `same`, `related`, or `different`. `related` counts as 
 
 ### Design overview
 
-An ingest-then-process pipeline: new articles are cleaned and embedded, and each is assigned to a story by embedding similarity, with a language model deciding only the ambiguous cases. The step runs as a small, repeatable batch job on the existing six-hour schedule, and every decision is logged so it can be explained and measured.
+An ingest, embed, then cluster pipeline: new articles are cleaned and embedded in one stage, and a separate stage assigns each to a story by embedding similarity, with a language model deciding only the ambiguous cases. The stages hand off through `feed_items` and each runs as a small, repeatable batch job on the existing six-hour schedule, so either can fail, be tuned, or be replaced without touching the other. Every decision is logged so it can be explained and measured.
 
 ```mermaid
 flowchart LR
   cron["GH Actions cron<br/>(every 6h)"] --> ingest["/api/ingest<br/>(existing)"]
   ingest --> fi[("feed_items")]
-  fi --> cluster["/api/cluster (new)<br/>embed, assign, close expired"]
+  fi -- "embedding IS NULL" --> embed["/api/embed (new)<br/>clean and embed"]
+  embed -- "writes vectors" --> fi
+  fi -- "embedded, not clustered" --> cluster["/api/cluster (new)<br/>assign, close expired"]
   cluster --> st[("stories")]
 ```
 
 The design has six parts, described in order and specified in [Detailed design](#detailed-design) under the same names.
 
-**1. Orchestration.** A new endpoint, `/api/cluster`, runs after ingest. It is idempotent, batched, and resumable: it handles a bounded amount of work per call and reports how much remains, and the workflow repeats it until nothing remains. This shape exists because the work has to fit inside a serverless function's time limit and must survive being interrupted. The logic lives in a shared library so local scripts reuse it without HTTP. Only one run of an endpoint can be active at a time, and every endpoint has a documented contract. It can also be scoped by source and date range, so new sources or older content can be processed deliberately.
+**1. Orchestration.** Two new endpoints, `/api/embed` and `/api/cluster`, run in that order after ingest. Each is idempotent, batched, and resumable: it handles a bounded amount of work per call and reports how much remains, and the workflow repeats it until nothing remains. This shape exists because the work has to fit inside a serverless function's time limit and must survive being interrupted. Splitting embedding from clustering isolates their failures: a throttled embedding API delays new articles but never blocks clustering of the ones already embedded. The logic lives in a shared library so local scripts reuse it without HTTP. Only one run of an endpoint can be active at a time, and every endpoint has a documented contract. It can also be scoped by source and date range, so new sources or older content can be processed deliberately.
 
-**2. Normalize and embed.** Each article's title and description are cleaned, duplicates of the same link across feeds are collapsed, and the text is turned into an embedding vector. Embeddings are the cheap signal that decides the clear cases, so everything after depends on clean text and a stable embedding model.
+**2. Normalize and embed.** Each article's title and description are cleaned, duplicates of the same link across feeds are collapsed, and the text is turned into an embedding vector. Embeddings are the cheap signal that decides the clear cases, so everything after depends on clean text and a stable embedding model. This is the `/api/embed` stage, and it never touches stories.
 
-**3. Assign to a story.** For each new article, find the closest open stories, then decide by similarity: very high joins, very low starts a new story, and the middle band goes to a language model. A story only accepts articles that fit a fixed time window around its first article, and live processing stops adding to it once the window passes. A late-arriving, new-source, or backfilled article can still join any story whose window it fits, even a closed one, so adding sources or older content doesn't create duplicate stories. The two-signal check and the fixed window exist to keep stories to one event and prevent them from chaining together unrelated articles.
+**3. Assign to a story.** This is the `/api/cluster` stage: it reads stored vectors and never calls the embedding API. For each embedded, unclustered article, find the closest open stories, then decide by similarity: very high joins, very low starts a new story, and the middle band goes to a language model. A story only accepts articles that fit a fixed time window around its first article, and live processing stops adding to it once the window passes. A late-arriving, new-source, or backfilled article can still join any story whose window it fits, even a closed one, so adding sources or older content doesn't create duplicate stories. The two-signal check and the fixed window exist to keep stories to one event and prevent them from chaining together unrelated articles.
 
 **4. Shared LLM client.** One small client wraps both model providers (Gemini and OpenRouter) for embeddings and chat. It handles retries, timeouts, a circuit breaker, and fallback, caches repeated verdicts, and records every call and its cost, so cost and behavior are visible in one place. It is shared with later features.
 
@@ -101,6 +103,9 @@ The design has six parts, described in order and specified in [Detailed design](
 | D24 | Row and story states are protected by database `CHECK` constraints, and the decision log is append-only (2026-10-03) | Derived states could otherwise drift into impossible combinations | Enforcing only in application code |
 | D25 | A health endpoint and a pipeline-health panel; the workflow fails loudly when something is wrong (2026-10-03) | A cron run once reported success while ingesting nothing; silent failure must not be possible | Reading logs |
 | D26 | Human labels and manual decisions are kept in dedicated tables and exported to the repo; embeddings and stories are treated as rebuildable (2026-10-03) | Derived data can be recomputed from `feed_items`; human judgments cannot | Treating all tables alike |
+| D27 | Embedding and clustering are separate stages with separate endpoints, handing off through `feed_items` (2026-10-04) | Isolates failures (a throttled embedding API doesn't block clustering), gives each stage its own time budget, lets the algorithm and the embedding input be changed independently, and makes each easier to debug and test | One combined `/api/cluster` |
+| D28 | `/api/cluster` does not wait for older, un-embedded articles (2026-10-04) | One stuck article can't block everything. Out-of-order arrival is already handled by the window-fit rule (D18, D19) | Clustering only up to the oldest un-embedded article (strict order) |
+| D29 | Embeddings stay on `feed_items`; changing the embedding model is a manual cutover, not built in v1 (2026-10-04) | Keeps one HNSW index and a simple schema. Model switches are rare, and re-clustering is out of scope | A separate embeddings table keyed by article, model, and input version |
 
 ### Detailed design
 
@@ -108,13 +113,14 @@ Platform versions: Next.js 16.3.6 (App Router) with React 19.2.8, Tailwind v4, T
 
 #### 1. Orchestration
 
-- **Endpoint:** `/api/cluster`, authenticated like `/api/ingest` (`Authorization: Bearer $CRON_SECRET`).
-- **Work selection:** rows with `clustered_at IS NULL`.
+- **Endpoints:** `/api/embed` and `/api/cluster`, each authenticated like `/api/ingest` (`Authorization: Bearer $CRON_SECRET`). They share `lib/pipeline/*` and hand off through `feed_items` (D27).
+- **Row states, derived from columns:** *ingested* (`embedding IS NULL`), *embedded* (`embedding IS NOT NULL AND clustered_at IS NULL`), *clustered* (`clustered_at IS NOT NULL`). There is no separate status column.
+- **Work selection:** `/api/embed` takes ingested rows whose `embed_next_attempt_at` is null or in the past, oldest `published_at` first. `/api/cluster` takes embedded rows whose `embedding_model` equals the configured model, oldest `published_at` first. Neither waits for the other (D28).
 - **Contract:** each call caps its work to stay under the function time limit and returns `{ processed, remaining, failed, durationMs }` (see Endpoint contracts below). Selected rows are processed in `published_at` ascending order.
-- **Scoping parameters (optional, D20):** `source=<feed id>` limits work to one source; `from` and `to` (ISO dates) limit it to a `published_at` range; `mode=backfill` lowers concurrency to respect free-tier limits and defers the close sweep until `remaining = 0`. With none set, the endpoint runs the scheduled live behavior.
-- **Workflow:** the GitHub Actions workflow (`.github/workflows/`, cron `0 */6 * * *`) calls the endpoint in a loop until `remaining = 0` (capped at 50 iterations). A `409 busy` ends the loop with a notice instead of failing. Any other non-2xx response fails the job. After clustering, a final step calls `/api/health`, and a `503` fails the job so GitHub's failure notification fires (D25). It keeps `curl -sfL`, which follows redirects.
+- **Scoping parameters (optional, D20), accepted by both endpoints:** `source=<feed id>` limits work to one source; `from` and `to` (ISO dates) limit it to a `published_at` range; `mode=backfill` lowers concurrency to respect free-tier limits and, for `/api/cluster`, defers the close sweep until `remaining = 0`. With none set, the endpoint runs the scheduled live behavior.
+- **Workflow:** the GitHub Actions workflow (`.github/workflows/`, cron `0 */6 * * *`) runs ingest, then `/api/embed`, then `/api/cluster`, each endpoint in a loop until `remaining = 0` (capped at 50 iterations). A `409 busy` ends a loop with a notice instead of failing. Any other non-2xx response fails the job, but the cluster step still runs if the embed step failed (`if: always()`), so already-embedded articles keep flowing. After clustering, a final step calls `/api/health`, and a `503` fails the job so GitHub's failure notification fires (D25). It keeps `curl -sfL`, which follows redirects.
 - **Code layout:** core logic in `lib/pipeline/*`, shared by the endpoint and local scripts (backfill, eval replay).
-- **Single-flight lease (D22):** at the start of a run, the endpoint takes a lease on its `pipeline_locks` row: `INSERT ... ON CONFLICT (name) DO UPDATE SET locked_until = now() + <lease>, owner = <run id> WHERE pipeline_locks.locked_until < now() RETURNING`. If no row comes back, another run holds it and the endpoint returns `409 { "status": "busy" }` without doing work. The lease is extended after each batch (so it comfortably outlasts one batch) and released at the end; if the function dies, it simply expires. A session-level advisory lock isn't used because the Supabase pooler is in transaction mode.
+- **Single-flight lease (D22):** at the start of a run, each endpoint takes a lease on its own `pipeline_locks` row (`embed` or `cluster`): `INSERT ... ON CONFLICT (name) DO UPDATE SET locked_until = now() + <lease>, owner = <run id> WHERE pipeline_locks.locked_until < now() RETURNING`. If no row comes back, another run holds it and the endpoint returns `409 { "status": "busy" }` without doing work. The lease is extended after each batch (so it comfortably outlasts one batch) and released at the end; if the function dies, it simply expires. A session-level advisory lock isn't used because the Supabase pooler is in transaction mode.
 - **Run record:** every run writes a `pipeline_runs` row (stage, started/finished time, processed, remaining, failed, error) used by the health checks.
 
 **Endpoint contracts.** All endpoints require `Authorization: Bearer $CRON_SECRET` (required in production; open only for local dev when unset, as `/api/ingest` is today) and respond with JSON.
@@ -122,14 +128,17 @@ Platform versions: Next.js 16.3.6 (App Router) with React 19.2.8, Tailwind v4, T
 | Endpoint | Params | 200 response | Errors |
 |---|---|---|---|
 | `GET /api/ingest` (existing) | none | existing ingest summary | `401` bad or missing secret; `500` |
+| `GET /api/embed` | optional `source=<feed id>`, `from`, `to` (ISO dates), `mode=backfill` (D20) | `{ processed, remaining, failed, durationMs }`; `failed` counts rows whose batch exhausted its retries this run | same errors as `/api/cluster` |
 | `GET /api/cluster` | optional `source=<feed id>`, `from`, `to` (ISO dates), `mode=backfill` (D20) | `{ processed, remaining, failed, durationMs }`. `remaining > 0` means call again, including when the run stopped at its time budget | `400` invalid params `{ error }`; `401` bad or missing secret; `409` `{ status: "busy" }` when the lease is held; `500` `{ error }` |
 | `GET /api/health` | none | `{ ok: true, checks: [...] }` when all checks pass | `503 { ok: false, checks: [...] }` when any check fails; `401` |
 
 Each check in `checks` is `{ name, ok, detail }`. The health checks, with starting thresholds:
 
 - **Ingest freshness:** the newest `feed_items.created_at` is under 12h old.
+- **Embed freshness:** the last successful `/api/embed` run (from `pipeline_runs`) is under 12h old.
+- **Cluster freshness:** the last successful `/api/cluster` run is under 12h old.
 - **Backlog:** the oldest unclustered article is under 12h old.
-- **Cluster freshness:** the last successful `/api/cluster` run (from `pipeline_runs`) is under 12h old.
+- **Stuck rows:** no rows have `embed_attempts` at or above 5.
 
 Admin pages and actions are Next.js server actions behind `ADMIN_SECRET` (see part 6), not part of this public contract.
 
@@ -141,6 +150,8 @@ Admin pages and actions are Next.js server actions behind `ADMIN_SECRET` (see pa
 - **Model:** `gemini-embedding-2` (D21), 768 dimensions, called through the OpenAI-compatible endpoint with `dimensions: 768`. Verified 2026-10-03 on both the native and OpenAI-compatible endpoints. Vectors come back unit-length at 768 dimensions, so they are stored as returned. Max input is 8,192 tokens, well above our ~1,000-character input. The model ID is stored per row in `feed_items.embedding_model`. Switching models later means re-embedding everything, since the vector spaces are not comparable.
 - **Batching:** up to 100 inputs per request; batches of 25 worked reliably under free-tier limits in testing.
 - **Source data shape:** the input is only title and RSS description (avg ~680 chars; ~9% empty or under 40 chars).
+- **Stage contract (`/api/embed`, D27):** selects ingested rows (see Work selection) up to a per-call cap, builds the input, and calls `embed()` in batches of 25. It writes `embedding`, `embedding_model`, and `embedding_input_version` in one `UPDATE` per batch. When a batch exhausts its retries, its rows get `embed_attempts + 1`, `embed_error`, and `embed_next_attempt_at = now() + min(1h × 2^attempts, 12h)`, and the run moves on. After 5 attempts a row is left out of the queue and surfaced by the stuck-rows health check. It calls only the embedding API and never reads stories.
+- **Versioning (D29):** `embedding_input_version` records which text builder and prefix produced a vector (a constant bumped whenever `lib/text.ts` cleaning or the prefix changes). `/api/cluster` only uses rows matching the configured `embedding_model`. A cutover procedure for changing models is not built in v1, since re-clustering is out of scope.
 
 #### 3. Assign to a story
 
@@ -162,7 +173,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-  A["Unclustered article<br/>(in published_at order)"] --> B["kNN: top 10 candidates in stories<br/>whose window fits it (open or closed)"]
+  A["Embedded, unclustered article<br/>(in published_at order)"] --> B["kNN: top 10 candidates in stories<br/>whose window fits it (open or closed)"]
   B --> C{"Any candidates?"}
   C -- no --> N["New story<br/>method = new_story"]
   C -- yes --> D["Score best story:<br/>max member sim AND centroid sim"]
@@ -176,6 +187,8 @@ flowchart TD
   J --> U["Update centroid and counts"]
   J2 --> U
 ```
+
+**Stage contract (`/api/cluster`, D27):** reads stored vectors only and never calls the embedding API; the LLM is used only for adjudication. Because it does not wait for embedding (D28), an older article that embeds late is clustered after newer ones and joins through the window-fit rule.
 
 Articles are processed in `published_at` order.
 
@@ -201,11 +214,11 @@ The design leaves room for the future event layer: stories get no `event_id` col
 `lib/llm.ts`, a `fetch` wrapper of roughly 100 lines, no SDK. Both providers expose OpenAI-compatible endpoints: OpenRouter natively, and Gemini at `generativelanguage.googleapis.com/v1beta/openai/` (verified).
 
 - **API:** `chat({ provider, model, messages, jsonSchema, purpose })` and `embed({ inputs, purpose })`.
-- **Resilience:** a 429 is treated as normal on the Gemini free tier: back off, then fall back to OpenRouter for chat, and log the fallback. A batch is never dropped silently: it is retried until it succeeds, or its rows are left unprocessed (`clustered_at` stays null) for the next run.
+- **Resilience:** a 429 is treated as normal on the Gemini free tier: back off, then fall back to OpenRouter for chat, and log the fallback. A batch is never dropped silently: it is retried until it succeeds, or its rows are left unprocessed (`embedding` stays null) for the next run.
 - **Failure policy (D23), with starting values to tune:**
   - **Timeouts:** 20s per embedding call and 30s per chat call; a database `statement_timeout` of 10s on pipeline queries. An endpoint-wide deadline equals the function's `maxDuration` minus a 10s margin; after it, the run starts no new batches and returns with `remaining`.
   - **Retries:** up to 4 attempts with exponential backoff and jitter (`wait = 1s × 2^attempt ± 50%`), only for idempotent calls (embedding and chat requests are). Total retry time is bounded by the time left before the deadline.
-  - **Circuit breaker, per provider and per run:** after 3 consecutive failures (429 or 5xx) that exhaust retries, the breaker opens and further calls to that provider fail fast for the rest of the run. Chat calls fall back to OpenRouter. Embedding calls have no fallback, so the run ends early and its rows wait for the next run. The breaker resets at the start of each run.
+  - **Circuit breaker, per provider and per run:** after 3 consecutive failures (429 or 5xx) that exhaust retries, the breaker opens and further calls to that provider fail fast for the rest of the run. Chat calls fall back to OpenRouter. Embedding calls have no fallback, so the embed run ends early and its rows wait for the next run; clustering is unaffected. The breaker resets at the start of each run.
 - **Prices (config price table; paid standard tier, looked up 2026-10-03; free tier is $0):** `gemini-embedding-2` $0.20 per 1M input tokens; `gemini-3.5-flash-lite` $0.30 per 1M input and $2.50 per 1M output tokens (output includes thinking tokens). Batch pricing for both is half the standard rate.
 - **Accounting:** every call writes a row to `llm_calls` (purpose, provider, model, tokens in/out, estimated cost from a price table in config (see below), latency, ok/error, related story/article id).
 - **Verdict cache:** keyed on `(article_id, story_member_ids, model, prompt_version)`, so eval sweeps and re-runs don't pay twice.
@@ -230,6 +243,10 @@ erDiagram
 feed_items  (+ columns)
   embedding        vector(768)
   embedding_model  text
+  embedding_input_version text
+  embed_attempts   int not null default 0
+  embed_error      text
+  embed_next_attempt_at timestamptz
   story_id         uuid → stories.id (nullable)
   clustered_at     timestamptz
   canonical_link   text
@@ -266,12 +283,12 @@ pipeline_locks         -- single-flight lease per endpoint
   name (pk), owner, locked_until
 
 pipeline_runs          -- one row per endpoint run, for health checks
-  id, stage, started_at, finished_at, processed, remaining, failed, error
+  id, stage ('embed' | 'cluster'), started_at, finished_at, processed, remaining, failed, error
 ```
 
 **Invariants (D24).** Enforced in the database, not only in code:
 
-- `feed_items`: `clustered_at IS NULL OR (embedding IS NOT NULL AND story_id IS NOT NULL)`, and `embedding IS NULL OR embedding_model IS NOT NULL`.
+- `feed_items`: `clustered_at IS NULL OR (embedding IS NOT NULL AND story_id IS NOT NULL)`, and `embedding IS NULL OR (embedding_model IS NOT NULL AND embedding_input_version IS NOT NULL)`.
 - `stories`: `status IN ('open', 'closed')`, `first_article_at <= last_article_at`, and `window_ends_at >= last_article_at` (the window always covers the story's last article).
 - Status moves `open` to `closed` only, and only through the close sweep; a `closed` story is never set back to `open`. A trigger rejects the reverse transition.
 - `story_assignments` is append-only: a trigger rejects `UPDATE` and `DELETE`.
@@ -310,7 +327,7 @@ The "doesn't belong" admin action writes both a label and a `manual` assignment,
 - **Stories inspector:** open and closed stories with members, per-member score and method, and LLM reasoning. A "doesn't belong" action records a label (`related` or `different`) and a `manual` reassignment, so production mistakes become eval data.
 - **Labeling queue:** side-by-side pairs, keyboard shortcuts `s` / `r` / `d` / `u`, with the "same story" definition pinned at the top.
 - **Cost panel:** `llm_calls` by day × purpose × model.
-- **Pipeline health panel (D25):** per stage, the last run's time, status, processed, and failed counts; row counts by state (ingested without an embedding, embedded but unclustered, clustered); the age of the oldest unprocessed article; the number of open stories; and 429 and fallback counts from `llm_calls`. It shows the same checks as `/api/health`.
+- **Pipeline health panel (D25):** per stage, the last run's time, status, processed, and failed counts; row counts by state (ingested without an embedding, embedded but unclustered, clustered); the age of the oldest unprocessed article; the number of stuck rows (5 or more failed embed attempts); the number of open stories; and 429 and fallback counts from `llm_calls`. It shows the same checks as `/api/health`.
 
 ## Risks
 
@@ -334,8 +351,10 @@ The "doesn't belong" admin action writes both a label and a `manual` assignment,
 | **Promo and advertorial articles** (e.g. sportsbook bonus-code posts from different outlets) score ~0.85–0.87 against each other | They form fake stories | Add a noise filter or exclusion rule before or during normalization; check how many appear in the labeled snapshot |
 | **Split-at-birth stories.** No merge pass, so two outlets breaking an event simultaneously create two stories | Lower recall | Measured by recall; a later pass over open stories' centroids that reuses adjudication can fix it |
 | **Free-tier rate limits** on AI Studio | Throttled or failed calls | Backoff, small batches, OpenRouter fallback logged in `llm_calls` |
+| **Out-of-order clustering.** Embedding lag means an older article can be clustered after newer ones (D28) | Extra late appends and, in the worst case, a few more ambiguous decisions | The window-fit rule handles it (D18, D19); track how often articles cluster out of order in the eval and health data |
+| **Stuck rows.** An article that always fails to embed (for example empty text) | It never gets clustered | Attempt cap with backoff, a stuck-rows health check, and the admin panel count |
 | **A lease that expires mid-run** (D22) | Two runs process the same rows | The lease is extended after every batch and is longer than one batch; writes are idempotent, so a rare overlap duplicates work but not results |
-| **Function time limit** on Vercel Hobby | A batch could be cut off mid-run | Batched, resumable, idempotent endpoint (part 1) |
+| **Function time limit** on Vercel Hobby | A batch could be cut off mid-run | Batched, resumable, idempotent endpoints (part 1) |
 | **Late appends change closed stories** (D18) | A closed story's members, and any summary, change after it closed | Appends are logged in `story_assignments`; the summary feature derives staleness from members and re-summarizes ([story-summary-v1](../story-summary-v1/tdd.md) D7) |
 | **A backfill hits free-tier caps** | A long or failed run | `mode=backfill` throttles; the endpoint is resumable; OpenRouter fallback; run in date ranges |
 | **Free-tier prompts may be used for training** | Article text sent to Google | Acceptable: it is public news content |
@@ -368,22 +387,24 @@ How to add content beyond the scheduled live run. Nothing here is planned yet; i
 ### Adding a new source
 
 1. Add `{ id, label, url }` to `feeds.config.ts` and deploy. Check the feed's XML parses with `lib/rss.ts`.
-2. Run ingest (or wait for the next cron tick). The feed's latest items land in `feed_items` with `clustered_at` null.
-3. The next scheduled `/api/cluster` run processes them. Items older than 36h join closed stories they fit; the rest join open stories or start new ones. No extra steps.
+2. Run ingest (or wait for the next cron tick). The feed's latest items land in `feed_items` with `embedding` and `clustered_at` null.
+3. The next scheduled `/api/embed` run embeds them and `/api/cluster` then assigns them. Items older than 36h join closed stories they fit; the rest join open stories or start new ones. No extra steps.
 
 ### Backfilling older content
 
-1. **Load the articles into `feed_items`.** Feeds only expose their latest items, so history needs another source (an archive, export, or sitemap). Insert with the normal upsert by `guid`, with `published_at` set correctly and `clustered_at` null. How history is sourced is outside this design.
+1. **Load the articles into `feed_items`.** Feeds only expose their latest items, so history needs another source (an archive, export, or sitemap). Insert with the normal upsert by `guid`, with `published_at` set correctly and `embedding` and `clustered_at` null. How history is sourced is outside this design.
 2. **Try a small slice first.** Pick one day, run step 4 for just that range, and inspect the results in the stories inspector: which stories gained members, the `method` for each assignment, and any new stories that look like duplicates.
 3. **Overlap is safe.** If the scheduled run holds the lease, the call returns `409 busy` (D22); wait and call again.
 4. **Run the backfill, oldest range first:**
 
    ```bash
+   curl -s "$APP_URL/api/embed?mode=backfill&from=2026-08-01&to=2026-08-08" \
+     -H "Authorization: Bearer $CRON_SECRET"
    curl -s "$APP_URL/api/cluster?mode=backfill&from=2026-08-01&to=2026-08-08" \
      -H "Authorization: Bearer $CRON_SECRET"
    ```
 
-   Repeat the call until `remaining = 0`. Use `source=<feed id>` to limit it to one source. Items are processed oldest-first, and the close sweep runs once at the end.
+   Repeat each call until `remaining = 0`, embedding first, then clustering. Use `source=<feed id>` to limit it to one source. Items are processed oldest-first, and the close sweep runs once at the end.
 5. **Check the run.** Look at the cost panel for spend, `llm_calls` for 429s and OpenRouter fallbacks, and spot-check late appends in the stories inspector. Fix mistakes with the "doesn't belong" action (`manual` assignment).
 6. **Continue with the next range.** If the summary feature is live, run `/api/summarize` afterward so stories whose members changed are re-summarized.
 

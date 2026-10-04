@@ -32,18 +32,23 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
-| **1. Foundations** | Migration workflow + pgvector; full schema with constraints and triggers; `lib/text.ts`; `lib/llm.ts` with the failure policy; lease and run-record helpers; embedding backfill | All rows embedded; costs visible in `llm_calls`; invalid states rejected by the database |
+| **1. Foundations** | Migration workflow + pgvector; full schema with constraints and triggers; `lib/text.ts`; `lib/llm.ts` with the failure policy; lease and run-record helpers; embed stage logic + backfill script | All rows embedded; costs visible in `llm_calls`; invalid states rejected by the database |
 | **2. Baseline clustering** | Embedding-only assignment with window-fit candidates; snapshot; admin auth + labeling UI; label export/import; silver labels; replay harness; open-risk spikes (prefix, filtered kNN, promo filter) | Baseline P/R/related-leak recorded |
 | **3. LLM adjudication** | Gray-zone step + verdict cache; sweep thresholds + window | Meets clustering ship bar on snapshot |
-| **4. Wire it up** | `/api/cluster` and `/api/health` per the TDD contracts; workflow with loud failure; stories inspector, cost panel, pipeline health panel | 3 days unattended, no failed runs, within budget, a stall is caught |
+| **4. Wire it up** | `/api/embed`, `/api/cluster`, and `/api/health` per the TDD contracts; workflow with loud failure; stories inspector, cost panel, pipeline health panel | 3 days unattended, no failed runs, within budget, a stall is caught |
 
 ### Phase 1 — Foundations
+
+**Test setup**
+
+- [ ] Add a test runner (for example Vitest) and a `pnpm test` script; the repo has none today (`tsx` is already a dev dependency)
+- [ ] Set up a test database for the constraint, trigger, lease, and pipeline tests, separate from the production Supabase database (for example local Postgres with pgvector, or a separate Supabase project or branch)
 
 **Migrations and schema**
 
 - [ ] Switch from `db:push` to `db:generate` + `db:migrate`; add a custom SQL migration for `create extension if not exists vector`
-- [ ] Add schema: new `feed_items` columns (`embedding vector(768)`, `embedding_model`, `story_id`, `clustered_at`, `canonical_link`) + HNSW index (`vector_cosine_ops`); `stories` with btrees on `(status, window_ends_at)` (close sweep) and `(first_article_at, last_article_at)` (window fit), and no index on `centroid`; `story_assignments`; `llm_calls`; `eval_pair_labels`; `pipeline_locks`; `pipeline_runs`
-- [ ] Add database invariants (D24): `CHECK` constraints on `feed_items` (`clustered_at IS NULL OR (embedding IS NOT NULL AND story_id IS NOT NULL)`; `embedding IS NULL OR embedding_model IS NOT NULL`) and `stories` (`status IN ('open','closed')`; `first_article_at <= last_article_at`; `window_ends_at >= last_article_at`); a trigger that rejects `closed` → `open`; a trigger that rejects `UPDATE` and `DELETE` on `story_assignments`
+- [ ] Add schema: new `feed_items` columns (`embedding vector(768)`, `embedding_model`, `embedding_input_version`, `embed_attempts`, `embed_error`, `embed_next_attempt_at`, `story_id`, `clustered_at`, `canonical_link`) + HNSW index (`vector_cosine_ops`); `stories` with btrees on `(status, window_ends_at)` (close sweep) and `(first_article_at, last_article_at)` (window fit), and no index on `centroid`; `story_assignments`; `llm_calls`; `eval_pair_labels`; `pipeline_locks`; `pipeline_runs`
+- [ ] Add database invariants (D24): `CHECK` constraints on `feed_items` (`clustered_at IS NULL OR (embedding IS NOT NULL AND story_id IS NOT NULL)`; `embedding IS NULL OR (embedding_model IS NOT NULL AND embedding_input_version IS NOT NULL)`) and `stories` (`status IN ('open','closed')`; `first_article_at <= last_article_at`; `window_ends_at >= last_article_at`); a trigger that rejects `closed` → `open`; a trigger that rejects `UPDATE` and `DELETE` on `story_assignments`
   - [ ] Tests: each violating insert/update is rejected; a closed story can't be reopened; `story_assignments` rows can't be updated or deleted
 - [ ] Check what backups the Supabase plan provides for `feed_items`; if limited, add a periodic `feed_items` export
 
@@ -53,7 +58,7 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
   - [ ] Tests: HTML/entities, boilerplate strings ("Continue reading…", "The post X appeared first on Y"), utm stripping, same article in two feeds dedupes
 - [ ] `lib/llm.ts`: `chat` + `embed` (embeddings via the OpenAI-compatible endpoint with `dimensions: 768`, up to 100 inputs per request, 25 by default), `llm_calls` row per call, OpenRouter fallback for chat, verdict cache
 - [ ] `lib/llm.ts` failure policy (D23): timeouts (20s embedding, 30s chat), retries (up to 4 attempts, exponential backoff with jitter, bounded by the time left before the deadline), a per-provider, per-run circuit breaker (opens after 3 consecutive failures; chat falls back to OpenRouter; an embedding run ends early), and a batch is never dropped silently (retried, or its rows stay unprocessed for the next run)
-  - [ ] Tests: retry/backoff with jitter stays within bounds; the breaker opens after 3 consecutive failures and then fails fast; chat falls back and the fallback is logged; embedding ends the run early with rows left unprocessed (`clustered_at` null); no new batch starts after the deadline; cost computed from the price table; a cache hit makes no call
+  - [ ] Tests: retry/backoff with jitter stays within bounds; the breaker opens after 3 consecutive failures and then fails fast; chat falls back and the fallback is logged; embedding ends the run early with rows left unprocessed (`embedding` null); no new batch starts after the deadline; cost computed from the price table; a cache hit makes no call
 - [ ] Look up the AI Studio free-tier request limits for `gemini-embedding-2` and `gemini-3.5-flash-lite`; compare with ~1,000 embeds and ~200–350 adjudication calls/day
 - [ ] Fill the config price table with the prices in the TDD (`gemini-embedding-2`, `gemini-3.5-flash-lite`)
 
@@ -63,9 +68,11 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
   - [ ] Tests: a second take while held is refused; an expired lease can be taken; the lease is extended per batch
 - [ ] `pipeline_runs` recorder: one row per run (stage, started/finished, processed, remaining, failed, error)
 
-**Embedding**
+**Embedding (the `/api/embed` stage logic, D27)**
 
-- [ ] Embed backfill script using `gemini-embedding-2`, with the input `"task: clustering | query: " + title + "\n\n" + cleanSummary.slice(0, 1000)` and the model ID stored in `embedding_model`
+- [ ] `lib/pipeline/embed.ts`: select ingested rows (`embedding IS NULL`, `embed_next_attempt_at` null or past, oldest first), build the input `"task: clustering | query: " + title + "\n\n" + cleanSummary.slice(0, 1000)`, embed in batches of 25 with `gemini-embedding-2`, and write `embedding`, `embedding_model`, and `embedding_input_version` in one `UPDATE` per batch; a batch that exhausts its retries sets `embed_attempts + 1`, `embed_error`, and `embed_next_attempt_at = now() + min(1h × 2^attempts, 12h)`; rows with 5 attempts are left out
+  - [ ] Tests: a successful batch writes all three columns; a failing batch increments attempts, records the error, and sets the next attempt without affecting other batches; a row with 5 attempts is not selected; a row whose next attempt is in the future is not selected; re-running is a no-op
+- [ ] Embed backfill script that runs this logic over all existing rows
 - [ ] Exit: all rows embedded; costs visible in `llm_calls`; invalid states rejected by the database
 
 ### Phase 2 — Baseline clustering
@@ -74,8 +81,8 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 
 **Assignment**
 
-- [ ] `lib/pipeline/*`: embedding-only assignment, window-fit candidates (`last_article_at − 36h ≤ published_at ≤ first_article_at + 36h`, open or closed stories), max-member + centroid scoring, earlier-than-anchor handling, close sweep
-  - [ ] Tests: a later article within 36h of `first_article_at` joins and one beyond it doesn't; a first-to-last span never exceeds 36h; chaining case (A~B, B~C, A≁C) does not merge; a late article that fits a closed story joins it; an article earlier than `first_article_at` joins and moves the anchor back only if every member still fits, otherwise starts a new story; centroid running mean
+- [ ] `lib/pipeline/*`: embedding-only assignment (reads only embedded rows whose `embedding_model` matches the configured model, and never calls the embedding API), window-fit candidates (`last_article_at − 36h ≤ published_at ≤ first_article_at + 36h`, open or closed stories), max-member + centroid scoring, earlier-than-anchor handling, close sweep
+  - [ ] Tests: a later article within 36h of `first_article_at` joins and one beyond it doesn't; a first-to-last span never exceeds 36h; chaining case (A~B, B~C, A≁C) does not merge; a late article that fits a closed story joins it; an article earlier than `first_article_at` joins and moves the anchor back only if every member still fits, otherwise starts a new story; centroid running mean; an older article that is embedded and clustered after newer ones still joins the right story (out-of-order arrival, D28); rows embedded with a different model are ignored
 
 **Admin and labeling**
 
@@ -114,20 +121,21 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 
 **Endpoints**
 
-- [ ] `/api/cluster` per the TDD contract: processes rows oldest-first, takes the lease and returns `409 { status: "busy" }` if held, records a `pipeline_runs` row, stops starting batches at the deadline (`maxDuration` minus a 10s margin) and returns `{ processed, remaining, failed, durationMs }`; `400` on invalid params, `401` on a bad secret, `500 { error }` on failure
-- [ ] Optional scoping parameters: `source`, `from`/`to`, and `mode=backfill` (lower concurrency, close sweep deferred until `remaining = 0`)
-  - [ ] Tests: re-running a batch is a no-op; stopping mid-run and resuming gives the same result; two overlapping runs, the second gets `409`; `source` and `from`/`to` limit which rows are processed; invalid params return `400`; backfill mode processes oldest-first and runs the close sweep only at the end
-- [ ] `/api/health` per the TDD contract: ingest freshness, backlog age, and cluster freshness (each under 12h) as `{ ok, checks: [{ name, ok, detail }] }`; `503` when any check fails
+- [ ] `/api/embed` per the TDD contract: runs the Phase 1 embed logic, takes the `embed` lease and returns `409 { status: "busy" }` if held, records a `pipeline_runs` row, stops starting batches at the deadline (`maxDuration` minus a 10s margin), and returns `{ processed, remaining, failed, durationMs }`; `400` on invalid params, `401` on a bad secret, `500 { error }` on failure
+- [ ] `/api/cluster` per the TDD contract: same lease, run-record, deadline, and error behavior with the `cluster` lease, processing embedded rows oldest-first
+- [ ] Optional scoping parameters on both endpoints: `source`, `from`/`to`, and `mode=backfill` (lower concurrency; for `/api/cluster`, close sweep deferred until `remaining = 0`)
+  - [ ] Tests: re-running a batch is a no-op; stopping mid-run and resuming gives the same result; two overlapping runs of the same endpoint, the second gets `409`; `embed` and `cluster` can run at the same time; `source` and `from`/`to` limit which rows are processed; invalid params return `400`; backfill mode processes oldest-first and runs the close sweep only at the end; `/api/cluster` still clusters embedded rows while `/api/embed` is failing
+- [ ] `/api/health` per the TDD contract: ingest freshness, embed freshness, cluster freshness, and backlog age (each under 12h), plus no stuck rows (`embed_attempts` below 5), as `{ ok, checks: [{ name, ok, detail }] }`; `503` when any check fails
   - [ ] Tests: each check fails independently when its threshold is exceeded; `401` without the secret
 
 **Workflow**
 
-- [ ] Update the GitHub Actions workflow: call `/api/cluster` in a loop until `remaining = 0` (cap 50 iterations), end quietly on `409 busy`, fail the job on any other non-2xx, then call `/api/health` and fail the job on `503`; keep `curl -sfL`
+- [ ] Update the GitHub Actions workflow: after ingest, call `/api/embed` and then `/api/cluster`, each in a loop until `remaining = 0` (cap 50 iterations), end a loop quietly on `409 busy`, fail the job on any other non-2xx but still run the cluster step if embed failed (`if: always()`), then call `/api/health` and fail the job on `503`; keep `curl -sfL`
 
 **Admin tooling**
 
 - [ ] Stories inspector, "doesn't belong" action (records a label and a `manual` assignment), cost panel
-- [ ] Pipeline health panel: per-stage last run (time, status, processed, failed), row counts by state, age of the oldest unprocessed article, open-story count, 429 and fallback counts
+- [ ] Pipeline health panel: per-stage last run (time, status, processed, failed), row counts by state (ingested, embedded, clustered), age of the oldest unprocessed article, stuck-row count, open-story count, 429 and fallback counts
   - [ ] Tests: the "doesn't belong" action writes both the label and the `manual` assignment
 
 **Verification**
