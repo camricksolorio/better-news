@@ -12,7 +12,9 @@
     "db:push": "drizzle-kit push",
     "test": "vitest run",
     "test:watch": "vitest",
-    "embed:backfill": "tsx --env-file=.env --tsconfig tsconfig.json scripts/embed-backfill.ts"
+    "embed:backfill": "tsx --env-file=.env --tsconfig tsconfig.json scripts/embed-backfill.ts",
+    "labels:export": "tsx --env-file=.env --tsconfig tsconfig.json scripts/export-labels.ts",
+    "labels:import": "tsx --env-file=.env --tsconfig tsconfig.json scripts/import-labels.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",
