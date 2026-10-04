@@ -41,15 +41,15 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 
 **Test setup**
 
-- [ ] Add a test runner (for example Vitest) and a `pnpm test` script; the repo has none today (`tsx` is already a dev dependency)
-- [ ] Set up a test database for the constraint, trigger, lease, and pipeline tests, separate from the production Supabase database (for example local Postgres with pgvector, or a separate Supabase project or branch)
+- [x] Add a test runner (for example Vitest) and a `pnpm test` script; the repo has none today (`tsx` is already a dev dependency)
+- [x] Set up a test database for the constraint, trigger, lease, and pipeline tests, separate from the production Supabase database (for example local Postgres with pgvector, or a separate Supabase project or branch) (local Postgres 17 + pgvector via Homebrew, database `better_news_test`; `TEST_DATABASE_URL` overrides; tests refuse non-local hosts)
 
 **Migrations and schema**
 
-- [ ] Switch from `db:push` to `db:generate` + `db:migrate`; add a custom SQL migration for `create extension if not exists vector`
-- [ ] Add schema: new `feed_items` columns (`embedding vector(768)`, `embedding_model`, `embedding_input_version`, `embed_attempts`, `embed_error`, `embed_next_attempt_at`, `story_id`, `clustered_at`, `canonical_link`) + HNSW index (`vector_cosine_ops`); `stories` with btrees on `(status, window_ends_at)` (close sweep) and `(first_article_at, last_article_at)` (window fit), and no index on `centroid`; `story_assignments`; `llm_calls`; `eval_pair_labels`; `pipeline_locks`; `pipeline_runs`
-- [ ] Add database invariants (D24): `CHECK` constraints on `feed_items` (`clustered_at IS NULL OR (embedding IS NOT NULL AND story_id IS NOT NULL)`; `embedding IS NULL OR (embedding_model IS NOT NULL AND embedding_input_version IS NOT NULL)`) and `stories` (`status IN ('open','closed')`; `first_article_at <= last_article_at`; `window_ends_at >= last_article_at`); a trigger that rejects `closed` → `open`; a trigger that rejects `UPDATE` and `DELETE` on `story_assignments`
-  - [ ] Tests: each violating insert/update is rejected; a closed story can't be reopened; `story_assignments` rows can't be updated or deleted
+- [x] Switch from `db:push` to `db:generate` + `db:migrate`; add a custom SQL migration for `create extension if not exists vector` (baseline migration `0000` is idempotent so it is a no-op on the existing production table; not yet applied to production)
+- [x] Add schema: new `feed_items` columns (`embedding vector(768)`, `embedding_model`, `embedding_input_version`, `embed_attempts`, `embed_error`, `embed_next_attempt_at`, `story_id`, `clustered_at`, `canonical_link`) + HNSW index (`vector_cosine_ops`); `stories` with btrees on `(status, window_ends_at)` (close sweep) and `(first_article_at, last_article_at)` (window fit), and no index on `centroid`; `story_assignments`; `llm_calls`; `eval_pair_labels`; `pipeline_locks`; `pipeline_runs`
+- [x] Add database invariants (D24): `CHECK` constraints on `feed_items` (`clustered_at IS NULL OR (embedding IS NOT NULL AND story_id IS NOT NULL)`; `embedding IS NULL OR (embedding_model IS NOT NULL AND embedding_input_version IS NOT NULL)`) and `stories` (`status IN ('open','closed')`; `first_article_at <= last_article_at`; `window_ends_at >= last_article_at`); a trigger that rejects `closed` → `open`; a trigger that rejects `UPDATE` and `DELETE` on `story_assignments`
+  - [x] Tests: each violating insert/update is rejected; a closed story can't be reopened; `story_assignments` rows can't be updated or deleted
 - [ ] Check what backups the Supabase plan provides for `feed_items`; if limited, add a periodic `feed_items` export
 
 **Text and LLM client**
