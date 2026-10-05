@@ -94,7 +94,7 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 
 **Evaluation**
 
-- [~] `scripts/snapshot.ts` → `eval/snapshot-YYYY-MM-DD.jsonl` (written and type-checked; not run, because it needs the production database embedded first)
+- [x] `scripts/snapshot.ts` → `eval/snapshot-YYYY-MM-DD.jsonl` (run 2026-10-05: 6,301 articles from 2026-09-29, 28 sources, 287 thin; the ~64 MB file is gitignored and rebuildable)
 - [ ] Generate ~300 stratified pairs (oversample likely `related`); silver-label via OpenRouter; human review of disagreements + ~50 random; export the labels
 - [x] `pnpm eval:cluster` replay harness: pairwise P/R/F1, related-leak, LLM-band %, cost per 100 articles, worst merges/splits (cost per 100 articles is added in Phase 3 with the adjudicator; the baseline makes no LLM calls)
   - [x] Tests: metrics on a tiny hand-built labeled fixture, with `related` counted as negative
