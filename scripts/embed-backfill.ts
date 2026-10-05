@@ -11,7 +11,8 @@ import { extendLease, releaseLease, takeLease } from "@/lib/pipeline/lease";
 import { finishRun, startRun } from "@/lib/pipeline/runs";
 
 const LEASE_MS = 120_000;
-const RUN_MS = 50_000;
+// No serverless time limit here, so a run can be long; pacing waits between batches count against it.
+const RUN_MS = 20 * 60_000;
 
 async function main() {
   const { values } = parseArgs({
@@ -48,12 +49,15 @@ async function main() {
         from: values.from ? new Date(values.from) : undefined,
         to: values.to ? new Date(values.to) : undefined,
         limit: values.limit ? Number(values.limit) : undefined,
-        afterBatch: () => extendLease(db, "embed", owner, LEASE_MS),
+        afterBatch: async () => {
+          process.stdout.write(".");
+          return extendLease(db, "embed", owner, LEASE_MS);
+        },
       });
       await finishRun(db, runId, result);
       total += result.processed;
       totalFailed += result.failed;
-      console.log(`run: processed=${result.processed} failed=${result.failed} remaining=${result.remaining}`);
+      console.log(`\nrun: processed=${result.processed} failed=${result.failed} remaining=${result.remaining}`);
       if (result.remaining === 0 || result.processed === 0 || values.limit) break;
     }
   } finally {
