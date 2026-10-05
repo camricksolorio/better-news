@@ -89,6 +89,7 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 - [~] `ADMIN_SECRET` in `.env.example`, local `.env`, Vercel; `proxy.ts` gate + sign-in page; re-check in every admin action and route (done: `.env.example`, local `.env`, `proxy.ts` gate, sign-in page, `requireAdmin()` on pages and actions; remaining: set `ADMIN_SECRET` on Vercel, which is the user's call)
   - [x] Tests: unauthenticated request to an admin route is rejected even when the proxy is bypassed
 - [ ] Labeling UI (`s` / `r` / `d` / `u`, definition pinned)
+- [x] Clustering explorer at `/admin/explore` (added 2026-10-05, not in the original plan): replays the snapshot at any `T_low`, `T_high`, window, and gray-zone handling with no API calls; shows summary stats, a score histogram, stories (most suspicious first), gray-zone articles with their best candidate story, and title search. Local-only: it reads the gitignored snapshot file
 - [~] `scripts/export-labels.ts` and a matching import script (D26): export `eval_pair_labels` and `manual` assignments, keyed by article `guid`, to `eval/labels-YYYY-MM-DD.jsonl` Done for `eval_pair_labels` (`pnpm labels:export` / `pnpm labels:import`, tested). Remaining: `manual` assignments, which have no producer until the Phase 4 "doesn't belong" action
   - [~] Tests: export then import into an empty database restores the same labels and manual assignments (pair labels only)
 

@@ -18,7 +18,11 @@ export type MemoryStore = StoryStore & {
   assignments: { articleId: string; storyId: string; info: AssignmentInfo }[];
 };
 
-export function createMemoryStore(): MemoryStore {
+// `memberSim` lets a caller supply precomputed similarities (the explorer UI does); the default
+// computes cosine from the vectors.
+export function createMemoryStore(
+  memberSim: (article: ArticleInput, member: ArticleInput) => number = (a, m) => cosine(a.embedding, m.embedding),
+): MemoryStore {
   const stories = new Map<string, StoryState>();
   const members = new Map<string, ArticleInput[]>();
   const assignments: MemoryStore["assignments"] = [];
@@ -30,16 +34,21 @@ export function createMemoryStore(): MemoryStore {
     assignments,
 
     async candidates(article: ArticleInput, cfg: ClusterConfig): Promise<Candidate[]> {
-      const neighbors: { storyId: string; sim: number }[] = [];
+      // Keep only the k most similar members (a small sorted list) instead of sorting them all.
+      const top: { storyId: string; sim: number }[] = [];
       for (const [storyId, story] of stories) {
         if (!fitsWindow(story, article.time, cfg.windowHours)) continue;
         for (const m of members.get(storyId) ?? []) {
-          neighbors.push({ storyId, sim: cosine(article.embedding, m.embedding) });
+          const sim = memberSim(article, m);
+          if (top.length === cfg.k && sim <= top[top.length - 1].sim) continue;
+          let i = top.length;
+          while (i > 0 && top[i - 1].sim < sim) i--;
+          top.splice(i, 0, { storyId, sim });
+          if (top.length > cfg.k) top.pop();
         }
       }
-      neighbors.sort((a, b) => b.sim - a.sim);
       const topByStory = new Map<string, number>();
-      for (const n of neighbors.slice(0, cfg.k)) {
+      for (const n of top) {
         topByStory.set(n.storyId, Math.max(topByStory.get(n.storyId) ?? -1, n.sim));
       }
       return [...topByStory].map(([storyId, topScore]) => {

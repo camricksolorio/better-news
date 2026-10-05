@@ -14,6 +14,9 @@ export default async function AdminHome() {
         </form>
       </div>
       <ul className="list-disc pl-5 text-zinc-700 dark:text-zinc-300">
+        <li>
+          <a href="/admin/explore" className="underline">Clustering explorer</a>: replay the snapshot at any thresholds (no API calls)
+        </li>
         <li>Labeling, stories, costs, and pipeline health will be linked here.</li>
       </ul>
     </main>

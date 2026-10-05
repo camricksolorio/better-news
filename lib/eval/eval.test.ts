@@ -92,3 +92,68 @@ describe("replay", () => {
     expect(two.stories).toBe(one.stories);
   });
 });
+
+import { buildSimCache } from "./sim-cache";
+import { cosine } from "@/lib/pipeline/assign";
+
+describe("sim cache", () => {
+  // Deterministic pseudo-random unit-ish vectors.
+  const rng = (seed: number) => () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296) - 0.5;
+  const make = (n: number): SnapshotArticle[] => {
+    const r = rng(7);
+    return Array.from({ length: n }, (_, i) => ({
+      guid: `g${i}`,
+      sourceId: "s",
+      title: `t${i}`,
+      summary: null,
+      time: new Date(Date.UTC(2026, 9, 1, 0, i * 20)).toISOString(), // 3 per hour: ~120 articles span 40h
+      thin: false,
+      embedding: Array.from({ length: 16 }, () => r()),
+    }));
+  };
+
+  it("matches direct cosine within the cached window", () => {
+    const snap = make(120);
+    const cache = buildSimCache(snap, 48);
+    const a = cache.sorted[100];
+    const m = cache.sorted[40];
+    const toInput = (x: SnapshotArticle) => ({ id: x.guid, sourceId: x.sourceId, time: new Date(x.time), embedding: x.embedding, thin: x.thin });
+    expect(cache.memberSim(toInput(a), toInput(m))).toBeCloseTo(cosine(a.embedding, m.embedding), 5);
+  });
+
+  it("falls back to direct cosine outside the cached window", () => {
+    const snap = make(300); // 100h span, window 48h
+    const cache = buildSimCache(snap, 48);
+    const a = cache.sorted[299];
+    const m = cache.sorted[0];
+    const toInput = (x: SnapshotArticle) => ({ id: x.guid, sourceId: x.sourceId, time: new Date(x.time), embedding: x.embedding, thin: x.thin });
+    expect(cache.memberSim(toInput(a), toInput(m))).toBeCloseTo(cosine(a.embedding, m.embedding), 5);
+  });
+
+  it("replay with the cache gives the same clusters as without", async () => {
+    const snap = make(200);
+    const plain = await replay(snap, [], { ...DEFAULT_CLUSTER_CONFIG, tHigh: 0.2, tLow: 0.1 });
+    const cached = await replay(snap, [], { ...DEFAULT_CLUSTER_CONFIG, tHigh: 0.2, tLow: 0.1 }, { memberSim: buildSimCache(snap).memberSim });
+    const groups = (m: Map<string, string>) => {
+      const g = new Map<string, string[]>();
+      for (const [k, v] of m) g.set(v, [...(g.get(v) ?? []), k]);
+      return [...g.values()].map((x) => x.sort().join(",")).sort();
+    };
+    expect(groups(cached.clusterOf)).toEqual(groups(plain.clusterOf));
+    expect(plain.stories).toBeLessThan(200);
+  });
+
+  it("gray 'join' mode joins gray-zone articles, 'new' does not", async () => {
+    const a = (guid: string, hour: number, deg: number): SnapshotArticle => ({
+      guid, sourceId: "s", title: guid, summary: null, thin: false,
+      time: new Date(Date.UTC(2026, 9, 1, hour)).toISOString(),
+      embedding: [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180), 0, 0],
+    });
+    const snap = [a("x", 0, 0), a("y", 1, 30)]; // cos 30deg = 0.866: gray
+    const conservative = await replay(snap, [], DEFAULT_CLUSTER_CONFIG, { gray: "new" });
+    const optimistic = await replay(snap, [], DEFAULT_CLUSTER_CONFIG, { gray: "join" });
+    expect(conservative.stories).toBe(2);
+    expect(optimistic.stories).toBe(1);
+    expect(optimistic.decisions.get("y")).toMatchObject({ gray: true, method: "llm" });
+  });
+});
