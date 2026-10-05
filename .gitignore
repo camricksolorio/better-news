@@ -42,3 +42,4 @@ next-env.d.ts
 
 # eval snapshots are ~60MB and rebuildable from the database (pnpm eval:snapshot); labels are committed
 /eval/snapshot-*.jsonl
+/eval/prefix-spike-embeddings.json

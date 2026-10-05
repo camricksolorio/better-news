@@ -337,10 +337,10 @@ The "doesn't belong" admin action writes both a label and a `manual` assignment,
 
 | Unknown | What would settle it |
 |---|---|
-| Whether the `task: clustering \| query:` prefix helps `gemini-embedding-2` | Confirm the exact format against Google's docs, then compare with and without the prefix on the labeled snapshot |
+| Whether the `task: clustering \| query:` prefix helps `gemini-embedding-2` | Format confirmed in Google's docs (2026-10-05). The with/without comparison runs on the labeled pairs (`pnpm eval:prefix`; the alternatives are no prefix and `task: sentence similarity \| query:`) |
 | Real share of articles that land in the LLM band | The replay harness's LLM-band percentage. The estimate is ~20–35% (~200–350 short calls/day at ~1,000 articles/day) and the strict definition may push it higher |
 | Whether the starting 36h window and `T_low`/`T_high` thresholds meet the bar | Sweep on the frozen snapshot. In a one-day test, `T_high` ≈ 0.88 admitted a few different-event pairs, while same-story pairs mostly scored ≥ 0.92 |
-| Whether the window-filtered kNN stays accurate and fast on a large backfilled history | Test pgvector 0.8 iterative index scans (`hnsw.iterative_scan`) on a large sample before any backfill; if needed, restrict by `published_at` range first |
+| ~~Whether the window-filtered kNN stays accurate and fast on a large backfilled history~~ | **Settled 2026-10-05.** At 100k rows over 100 days, default HNSW returned 3.3 of 10 rows (recall 0.33) because the window filter runs after the index search; `hnsw.iterative_scan = relaxed_order` gives recall 0.99 at ~10 ms, and is now set per candidate query in `store-db.ts` |
 | What backups the Supabase plan provides for `feed_items` (the source of truth that feeds can't re-supply) | Check the plan's backup and point-in-time recovery options; if limited, add a periodic export of `feed_items` |
 | ~~Whether the AI Studio free-tier request limits cover our volume~~ | **Settled 2026-10-05: they do not for `gemini-embedding-2`.** Limits are 100 requests/min, 30k tokens/min and 1,000 requests/day, and each input in a batch counts as one request (a probe of one 100-input call used the whole per-minute quota; the first per-day 429 arrived after 900 inputs / 36 HTTP requests). So the cap is ~1,000 articles a day, about our entire daily volume, and the ~7,500-row backlog would take a week. Still open: the `gemini-3.5-flash-lite` limits |
 

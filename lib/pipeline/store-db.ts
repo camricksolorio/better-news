@@ -33,6 +33,11 @@ export function createDbStore(db: Db, pipelineVersion: string): StoryStore {
   return {
     async candidates(article: ArticleInput, cfg: ClusterConfig): Promise<Candidate[]> {
       const e = vectorLiteral(article.embedding);
+      // The window filter is applied after the HNSW search, so without iterative scans a narrow
+      // window returns too few neighbors (the 2026-10-05 spike: 3.3 of 10 rows, recall 0.33 at
+      // 100k rows). relaxed_order keeps scanning until k rows pass the filter (recall 0.99).
+      // Applies to this transaction only.
+      await db.execute(sql`SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)`);
       const rows = (await db.execute(sql`
         WITH nn AS (
           SELECT f.story_id, 1 - (f.embedding <=> ${e}::vector) AS sim

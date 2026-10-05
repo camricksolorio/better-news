@@ -88,7 +88,7 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 
 - [~] `ADMIN_SECRET` in `.env.example`, local `.env`, Vercel; `proxy.ts` gate + sign-in page; re-check in every admin action and route (done: `.env.example`, local `.env`, `proxy.ts` gate, sign-in page, `requireAdmin()` on pages and actions; remaining: set `ADMIN_SECRET` on Vercel, which is the user's call)
   - [x] Tests: unauthenticated request to an admin route is rejected even when the proxy is bypassed
-- [ ] Labeling UI (`s` / `r` / `d` / `u`, definition pinned)
+- [x] Labeling UI at `/admin/label` (`s` / `r` / `d` / `u`, definition pinned, `h` shows the model's call, modes: review / unlabeled / all; labels save to `eval_pair_labels` as labeler `human`). Verified through the page render and unit tests; not yet used by a person
 - [x] Clustering explorer at `/admin/explore` (added 2026-10-05, not in the original plan): replays the snapshot at any `T_low`, `T_high`, window, and gray-zone handling with no API calls; shows summary stats, a score histogram, stories (most suspicious first), gray-zone articles with their best candidate story, and title search. Local-only: it reads the gitignored snapshot file
 - [~] `scripts/export-labels.ts` and a matching import script (D26): export `eval_pair_labels` and `manual` assignments, keyed by article `guid`, to `eval/labels-YYYY-MM-DD.jsonl` Done for `eval_pair_labels` (`pnpm labels:export` / `pnpm labels:import`, tested). Remaining: `manual` assignments, which have no producer until the Phase 4 "doesn't belong" action
   - [~] Tests: export then import into an empty database restores the same labels and manual assignments (pair labels only)
@@ -96,16 +96,16 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 **Evaluation**
 
 - [x] `scripts/snapshot.ts` → `eval/snapshot-YYYY-MM-DD.jsonl` (run 2026-10-05: 6,301 articles from 2026-09-29, 28 sources, 287 thin; the ~64 MB file is gitignored and rebuildable)
-- [ ] Generate ~300 stratified pairs (oversample likely `related`); silver-label via OpenRouter; human review of disagreements + ~50 random; export the labels
+- [~] Generate ~300 stratified pairs (oversample likely `related`); silver-label via OpenRouter; human review of disagreements + ~50 random; export the labels. Done: `pnpm eval:pairs` wrote `eval/pairs-2026-10-05.jsonl` (300 pairs: 60 merged, 60 related, 40/50/50/40 across the 0.6/0.7/0.8/0.9 buckets; cross-outlet pairs only). Silver labeling is built (`pnpm eval:silver`, prompt v1 with the verbatim definition) but **not run**: dry run says ~$0.62 with `anthropic/claude-sonnet-5.5`; it needs the user's go-ahead (`--confirm`). Human review and export remain
 - [x] `pnpm eval:cluster` replay harness: pairwise P/R/F1, related-leak, LLM-band %, cost per 100 articles, worst merges/splits (cost per 100 articles is added in Phase 3 with the adjudicator; the baseline makes no LLM calls)
   - [x] Tests: metrics on a tiny hand-built labeled fixture, with `related` counted as negative
 
 **Open-risk spikes**
 
-- [ ] Compare embeddings with and without the `task: clustering | query: ` prefix on the labeled snapshot, and confirm the exact format against Google's docs
-- [ ] Check whether the window-filtered kNN stays accurate and fast at scale using pgvector 0.8 iterative index scans (`hnsw.iterative_scan`) on a large sample
-- [ ] Check how many promo/advertorial articles (e.g. sportsbook bonus-code posts) appear in the snapshot; add a noise filter or exclusion rule if they form fake stories
-- [ ] Measure the real share of articles landing in the LLM band
+- [~] Compare embeddings with and without the `task: clustering | query: ` prefix on the labeled snapshot, and confirm the exact format against Google's docs. Format confirmed 2026-10-05 (docs: `task: clustering | query: {content}`; `task: sentence similarity | query: {content}` is the other symmetric option; no `task_type` field on this model). The 537 pair articles are embedded under three variants (none, clustering, similarity) into the gitignored `eval/prefix-spike-embeddings.json` (~$0.03); `pnpm eval:prefix eval` compares them once labels exist
+- [x] Check whether the window-filtered kNN stays accurate and fast at scale using pgvector 0.8 iterative index scans (`hnsw.iterative_scan`) on a large sample. Done 2026-10-05 (`pnpm eval:knn`, 100k rows over 100 days in a scratch local database, 150 queries): default HNSW returns only 3.3 of 10 rows (recall@10 0.325); `relaxed_order` gives recall 0.987 at ~10 ms p50; `ef_search` 200 gives 1.000 at ~14 ms; exact search is ~20 ms. Fix applied in `lib/pipeline/store-db.ts` (`set_config('hnsw.iterative_scan', 'relaxed_order', true)` per candidate query, tested). Real-history timing beyond 100k rows is unmeasured
+- [x] Check how many promo/advertorial articles (e.g. sportsbook bonus-code posts) appear in the snapshot; add a noise filter or exclusion rule if they form fake stories. Done 2026-10-05 (`pnpm eval:promo`): 36 of 6,301 articles (0.6%), 32 from `fox-latest` and 4 from `nypost`; they form 4 (at `T_high` 0.88) to 6 (0.92) stories that contain only promo articles. Low impact; no rule added. A title-pattern exclusion at the cluster stage is cheap if the user wants those out of stories
+- [~] Measure the real share of articles landing in the LLM band. First measurement (conservative baseline, snapshot of 6,301): 59.5% at `T_low` 0.75 / `T_high` 0.88 and 73.6% at `T_high` 0.92, versus the 20–35% estimate. Re-measure after tuning and with the labeled sweep
 
 - [ ] Exit: baseline P/R/related-leak recorded
 

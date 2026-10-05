@@ -19,7 +19,10 @@
     "eval:cluster": "tsx --tsconfig tsconfig.json scripts/eval-cluster.ts",
     "usage": "tsx --env-file=.env --tsconfig tsconfig.json scripts/usage.ts",
     "eval:pairs": "tsx --tsconfig tsconfig.json scripts/generate-pairs.ts",
-    "eval:silver": "tsx --env-file=.env --tsconfig tsconfig.json scripts/silver-label.ts"
+    "eval:silver": "tsx --env-file=.env --tsconfig tsconfig.json scripts/silver-label.ts",
+    "eval:promo": "tsx --tsconfig tsconfig.json scripts/spike-promo.ts",
+    "eval:knn": "tsx --tsconfig tsconfig.json scripts/spike-knn.ts",
+    "eval:prefix": "tsx --env-file=.env --tsconfig tsconfig.json scripts/spike-prefix.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",

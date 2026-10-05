@@ -4,6 +4,8 @@ import { feedItems, stories, storyAssignments } from "@/db/schema";
 import { connectTestDb, resetTestDb } from "@/tests/test-db";
 import { DEFAULT_CLUSTER_CONFIG, assignArticle } from "./assign";
 import { runClusterStage } from "./cluster";
+import { createDbStore } from "./store-db";
+import type { Db } from "@/db/types";
 import { createMemoryStore } from "./store-memory";
 
 const { client, db } = connectTestDb();
@@ -68,6 +70,19 @@ describe("runClusterStage", () => {
     expect(result).toMatchObject({ processed: 1, remaining: 0 });
     expect((await get(other.id)).clusteredAt).toBeNull();
     expect((await get(mine.id)).clusteredAt).not.toBeNull();
+  });
+
+  it("turns on HNSW iterative scans for the candidate query (kNN spike, 2026-10-05)", async () => {
+    const setting = await db.transaction(async (tx) => {
+      const store = createDbStore(tx as unknown as Db, "test");
+      await store.candidates(
+        { id: "x", sourceId: "s", time: new Date(), embedding: at(0), thin: false },
+        DEFAULT_CLUSTER_CONFIG,
+      );
+      const [row] = (await tx.execute(sql`SHOW hnsw.iterative_scan`)) as unknown as { "hnsw.iterative_scan": string }[];
+      return row["hnsw.iterative_scan"];
+    });
+    expect(setting).toBe("relaxed_order");
   });
 
   it("skips ingested rows that have no embedding yet", async () => {
