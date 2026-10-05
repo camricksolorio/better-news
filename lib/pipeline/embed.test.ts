@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { feedItems } from "@/db/schema";
 import { connectTestDb, resetTestDb } from "@/tests/test-db";
-import { CircuitOpenError, LlmError } from "@/lib/llm";
+import { CircuitOpenError, LlmError, QuotaExhaustedError } from "@/lib/llm";
 import { runEmbedStage } from "./embed";
 
 const { client, db } = connectTestDb();
@@ -140,6 +140,15 @@ describe("runEmbedStage", () => {
     expect(result).toMatchObject({ processed: 0, failed: 1, remaining: 3 });
     const untouched = await db.select().from(feedItems).where(sql`embed_attempts = 0 AND embedding IS NULL`);
     expect(untouched).toHaveLength(3);
+  });
+
+  it("ends the run cleanly when the daily quota is spent, leaving rows unpenalized", async () => {
+    for (let i = 0; i < 3; i++) await ingest();
+    const llm = { embed: vi.fn(async () => { throw new QuotaExhaustedError("daily quota", "gemini", 429); }) };
+    const result = await runEmbedStage(db, llm, { deadline: far(), batchSize: 1 });
+    expect(llm.embed).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ processed: 0, failed: 0, remaining: 3 });
+    expect(await db.select().from(feedItems).where(sql`embed_attempts > 0`)).toHaveLength(0);
   });
 
   it("starts no new batch after the deadline", async () => {

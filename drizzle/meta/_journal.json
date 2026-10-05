@@ -36,6 +36,13 @@
       "when": 1791146498887,
       "tag": "0004_llm_cache_key",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791209507863,
+      "tag": "0005_llm_usage_ledger",
+      "breakpoints": true
     }
   ]
 }

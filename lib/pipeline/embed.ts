@@ -4,7 +4,7 @@ import { and, asc, count, eq, gte, inArray, isNull, lt, lte, or, sql, type SQL }
 import type { Db } from "@/db/types";
 import { feedItems } from "@/db/schema";
 import { EMBEDDING_MODEL, EMBED_BATCH_SIZE } from "@/lib/llm-config";
-import { CircuitOpenError, DeadlineError, type LlmClient } from "@/lib/llm";
+import { CircuitOpenError, DeadlineError, QuotaExhaustedError, type LlmClient } from "@/lib/llm";
 import { EMBEDDING_INPUT_VERSION, buildEmbeddingInput, canonicalLink } from "@/lib/text";
 
 export const MAX_EMBED_ATTEMPTS = 5;
@@ -100,8 +100,8 @@ export async function runEmbedStage(
       await writeEmbeddings(db, rows, vectors);
       processed += rows.length;
     } catch (e) {
-      // Breaker open or out of time: leave the rows untouched for the next run.
-      if (e instanceof CircuitOpenError || e instanceof DeadlineError) break;
+      // Breaker open, daily quota spent, or out of time: leave the rows untouched for the next run.
+      if (e instanceof CircuitOpenError || e instanceof DeadlineError || e instanceof QuotaExhaustedError) break;
       await recordFailure(db, rows.map((r) => r.id), (e as Error).message);
       failed += rows.length;
     }

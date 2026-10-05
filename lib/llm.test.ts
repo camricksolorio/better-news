@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { llmCalls } from "@/db/schema";
 import { connectTestDb, resetTestDb } from "@/tests/test-db";
-import { CircuitOpenError, DeadlineError, LlmError, createLlmClient } from "./llm";
+import { CircuitOpenError, DeadlineError, LlmError, QuotaExhaustedError, createLlmClient, parseQuotaFailure } from "./llm";
+import type { EmbedQuota } from "./llm-config";
 
 const { client, db } = connectTestDb();
 afterAll(() => client.end());
@@ -16,7 +17,10 @@ const chatOk = (content: string) =>
   json({ choices: [{ message: { content } }], usage: { prompt_tokens: 1000, completion_tokens: 100 } });
 
 // A fake clock: sleeping advances it, so deadline math is deterministic.
-function harness(responses: (() => Response | Promise<Response>)[], opts: { deadline?: number; random?: number } = {}) {
+function harness(
+  responses: (() => Response | Promise<Response>)[],
+  opts: { deadline?: number; random?: number; embedQuota?: EmbedQuota | null } = {},
+) {
   let time = 1_000_000;
   const sleeps: number[] = [];
   const fetchMock = vi.fn(async () => {
@@ -35,8 +39,9 @@ function harness(responses: (() => Response | Promise<Response>)[], opts: { dead
     now: () => time,
     random: () => opts.random ?? 0.5,
     deadline: opts.deadline,
+    embedQuota: opts.embedQuota,
   });
-  return { llm, fetchMock, sleeps, advance: (ms: number) => (time += ms) };
+  return { llm, fetchMock, sleeps, advance: (ms: number) => (time += ms), time: () => time };
 }
 
 describe("embed", () => {
@@ -216,5 +221,170 @@ describe("chat", () => {
     await llm.chat({ ...chatArgs, cacheKey: "a" });
     await llm.chat({ ...chatArgs, cacheKey: "b" });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The body Gemini returned in the 2026-10-05 probe (trimmed): the per-minute request quota.
+const minuteBody = {
+  error: {
+    code: 429,
+    message: "You exceeded your current quota.",
+    status: "RESOURCE_EXHAUSTED",
+    details: [
+      { "@type": "type.googleapis.com/google.rpc.Help", links: [] },
+      {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        violations: [
+          {
+            quotaMetric: "generativelanguage.googleapis.com/embed_content_free_tier_requests",
+            quotaId: "EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier",
+            quotaValue: "100",
+          },
+        ],
+      },
+      { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "55s" },
+    ],
+  },
+};
+const dayBody = {
+  error: {
+    ...minuteBody.error,
+    details: [
+      {
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        violations: [
+          {
+            quotaMetric: "generativelanguage.googleapis.com/embed_content_free_tier_requests",
+            quotaId: "EmbedContentRequestsPerDayPerProjectPerModel-FreeTier",
+            quotaValue: "1000",
+          },
+        ],
+      },
+    ],
+  },
+};
+
+describe("quota errors", () => {
+  it("parses the quota id, scope, and retry delay from a 429 body", () => {
+    expect(parseQuotaFailure(JSON.stringify(minuteBody))).toEqual({
+      quota: {
+        id: "EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier",
+        metric: "generativelanguage.googleapis.com/embed_content_free_tier_requests",
+        scope: "minute",
+      },
+      retryDelayMs: 55_000,
+    });
+    expect(parseQuotaFailure(JSON.stringify(dayBody)).quota?.scope).toBe("day");
+    expect(parseQuotaFailure("not json")).toEqual({});
+  });
+
+  it("a per-minute 429 waits the server's retry delay, then succeeds", async () => {
+    const { llm, sleeps } = harness([() => json(minuteBody, 429), () => embedOk(1)], { random: 0, embedQuota: null });
+    await llm.embed({ inputs: ["a"] });
+    expect(sleeps).toEqual([55_000]);
+  });
+
+  it("a per-day 429 is not retried, does not open the breaker, and records the quota id", async () => {
+    const { llm, fetchMock } = harness([() => json(dayBody, 429)], { embedQuota: null });
+    await expect(llm.embed({ inputs: ["a", "b"] })).rejects.toBeInstanceOf(QuotaExhaustedError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(llm.isBreakerOpen("gemini")).toBe(false);
+    const [row] = await db.select().from(llmCalls);
+    expect(row).toMatchObject({ ok: false, inputCount: 2, quotaId: "EmbedContentRequestsPerDayPerProjectPerModel-FreeTier" });
+  });
+
+  it("after a per-day 429, later embeds in the run fail fast without a request", async () => {
+    const { llm, fetchMock } = harness([() => json(dayBody, 429)], { embedQuota: null });
+    await expect(llm.embed({ inputs: ["a"] })).rejects.toBeInstanceOf(QuotaExhaustedError);
+    await expect(llm.embed({ inputs: ["a"] })).rejects.toBeInstanceOf(QuotaExhaustedError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("chat falls back to OpenRouter when Gemini's daily quota is spent", async () => {
+    const calls: string[] = [];
+    const llm = createLlmClient({
+      db,
+      keys: { gemini: "g", openrouter: "o" },
+      fetch: (async (url: string) => {
+        calls.push(url);
+        return url.includes("openrouter.ai") ? chatOk("{}") : json(dayBody, 429);
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    const out = await llm.chat({ model: "gemini-3.5-flash-lite", messages: [{ role: "user", content: "hi" }], purpose: "adjudicate" });
+    expect(out.provider).toBe("openrouter");
+  });
+});
+
+describe("embedding pacing", () => {
+  const quota: EmbedQuota = { perMinuteInputs: 100, perMinuteTokens: 30_000, perDayInputs: 1_000, margin: 0.9 };
+  const batch = (n: number) => Array.from({ length: n }, (_, i) => `article ${i}`);
+
+  it("never sends more than 90 inputs in any 60s window", async () => {
+    const sends: { at: number; n: number }[] = [];
+    const h = harness(
+      Array.from({ length: 8 }, () => () => embedOk(25)),
+      { embedQuota: quota },
+    );
+    h.fetchMock.mockImplementation((async () => {
+      sends.push({ at: h.time(), n: 25 });
+      return embedOk(25);
+    }) as never);
+    for (let i = 0; i < 8; i++) await h.llm.embed({ inputs: batch(25) });
+    for (const s of sends) {
+      const inWindow = sends.filter((x) => x.at > s.at - 60_000 && x.at <= s.at).reduce((n, x) => n + x.n, 0);
+      expect(inWindow).toBeLessThanOrEqual(90);
+    }
+    // 3 batches fit per minute: 8 batches need at least two full waits.
+    expect(h.sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it("does not wait while under the limit", async () => {
+    const h = harness([() => embedOk(25), () => embedOk(25), () => embedOk(25)], { embedQuota: quota });
+    for (let i = 0; i < 3; i++) await h.llm.embed({ inputs: batch(25) });
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it("also paces on tokens (estimated at ~4 chars per token)", async () => {
+    const big = Array.from({ length: 4 }, () => "x".repeat(30_000)); // ~7.5k tokens per input
+    const h = harness([() => embedOk(1, 7500), () => embedOk(1, 7500), () => embedOk(1, 7500)], { embedQuota: quota });
+    await h.llm.embed({ inputs: [big[0]] });
+    await h.llm.embed({ inputs: [big[1]] });
+    await h.llm.embed({ inputs: [big[2]] }); // 3 x 7.5k = 22.5k fits under 27k
+    expect(h.sleeps).toEqual([]);
+    const h2 = harness(Array.from({ length: 4 }, () => () => embedOk(1, 7500)), { embedQuota: quota });
+    for (const text of big) await h2.llm.embed({ inputs: [text] }); // the 4th (30k total) must wait
+    expect(h2.sleeps.length).toBeGreaterThan(0);
+  });
+
+  it("shares the budget with earlier runs through llm_calls", async () => {
+    await db.insert(llmCalls).values({
+      purpose: "embed", provider: "gemini", model: "gemini-embedding-2", ok: true, inputCount: 90, inputTokens: 5000,
+      createdAt: new Date(Date.now() - 5_000),
+    });
+    const h = harness([() => embedOk(25)], { embedQuota: quota });
+    await h.llm.embed({ inputs: batch(25) });
+    // ~55s left on the earlier run's window
+    expect(h.sleeps.reduce((a, b) => a + b, 0)).toBeGreaterThan(50_000);
+    expect(h.sleeps.reduce((a, b) => a + b, 0)).toBeLessThan(60_000);
+  });
+
+  it("is off when no quota is configured (paid tier)", async () => {
+    const h = harness(Array.from({ length: 6 }, () => () => embedOk(25)), { embedQuota: null });
+    for (let i = 0; i < 6; i++) await h.llm.embed({ inputs: batch(25) });
+    expect(h.sleeps).toEqual([]);
+  });
+
+  it("gives up with a deadline error instead of waiting past the deadline", async () => {
+    const h = harness(Array.from({ length: 4 }, () => () => embedOk(25)), { embedQuota: quota, deadline: 1_000_000 + 30_000 });
+    for (let i = 0; i < 3; i++) await h.llm.embed({ inputs: batch(25) });
+    await expect(h.llm.embed({ inputs: batch(25) })).rejects.toBeInstanceOf(DeadlineError);
+    expect(h.fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("counts a rejected 429 against the window so the next call backs off", async () => {
+    const h = harness([() => json(minuteBody, 429), () => embedOk(25), () => embedOk(25)], { embedQuota: quota, random: 0 });
+    await h.llm.embed({ inputs: batch(25) }); // 429, waits 55s, retries OK
+    expect(h.sleeps[0]).toBe(55_000);
   });
 });

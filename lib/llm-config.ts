@@ -33,3 +33,30 @@ export function estimateCostUsd(model: string, inputTokens: number, outputTokens
   if (!price) return null;
   return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
+
+// Gemini free-tier limits for gemini-embedding-2, read from AI Studio on 2026-10-05. A probe the
+// same day showed the per-minute "requests" quota counts every input in a batch (one request of
+// 100 inputs used the whole 100/min), so the limits below are in inputs. Whether the daily cap
+// counts inputs too is unverified until the first per-day 429; the usage ledger records it.
+export type EmbedQuota = {
+  perMinuteInputs: number;
+  perMinuteTokens: number;
+  perDayInputs: number;
+  // Stay this fraction under the per-minute limits.
+  margin: number;
+};
+
+export const EMBED_QUOTA_FREE: EmbedQuota = {
+  perMinuteInputs: 100,
+  perMinuteTokens: 30_000,
+  perDayInputs: 1_000,
+  margin: 0.9,
+};
+
+// GEMINI_TIER=paid turns client-side pacing off (paid limits are far above our volume).
+export function defaultEmbedQuota(): EmbedQuota | null {
+  return process.env.GEMINI_TIER === "paid" ? null : EMBED_QUOTA_FREE;
+}
+
+// Daily quotas reset at midnight Pacific.
+export const QUOTA_TIME_ZONE = "America/Los_Angeles";

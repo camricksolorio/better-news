@@ -103,6 +103,10 @@ export const llmCalls = pgTable(
     // Verdict cache (D13): chat calls with a cache key store their parsed response here.
     cacheKey: text("cache_key"),
     response: jsonb("response"),
+    // Usage ledger: how many inputs a call carried (the Gemini free tier counts each input
+    // against its request quotas), and which quota a 429 named.
+    inputCount: integer("input_count"),
+    quotaId: text("quota_id"),
   },
   (table) => [index("llm_calls_cache_key_idx").on(table.cacheKey)],
 );
