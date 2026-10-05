@@ -404,6 +404,9 @@ export function createLlmClient(options: LlmClientOptions) {
 
   // Chat goes to Gemini first, then falls back to OpenRouter; both attempts are recorded.
   async function chat(args: {
+    // "openrouter" skips Gemini and the fallback: the call goes to `model` on OpenRouter only
+    // (silver labeling uses a non-Gemini model on purpose, D12).
+    provider?: Provider;
     model: string;
     fallbackModel?: string;
     messages: ChatMessage[];
@@ -421,8 +424,11 @@ export function createLlmClient(options: LlmClientOptions) {
       }
     }
 
-    const attempts: { provider: Provider; model: string }[] = [{ provider: "gemini", model: args.model }];
-    if (keys.openrouter) {
+    const attempts: { provider: Provider; model: string }[] =
+      args.provider === "openrouter"
+        ? [{ provider: "openrouter", model: args.model }]
+        : [{ provider: "gemini", model: args.model }];
+    if (args.provider !== "openrouter" && keys.openrouter) {
       attempts.push({ provider: "openrouter", model: args.fallbackModel ?? ADJUDICATION_FALLBACK_MODEL });
     }
 

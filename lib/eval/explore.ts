@@ -130,7 +130,7 @@ async function compute(params: ExploreParams): Promise<ExploreResult> {
     const d = rep.decisions.get(guid)!;
     return {
       guid,
-      title: a.title,
+      title: cleanText(a.title),
       source: a.sourceId,
       time: a.time,
       snippet: cleanText(a.summary).slice(0, 220),

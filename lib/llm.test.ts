@@ -207,6 +207,38 @@ describe("chat", () => {
     await expect(llm.chat({ ...chatArgs })).rejects.toBeInstanceOf(LlmError);
   });
 
+  it("provider openrouter goes only to OpenRouter with the given model, never Gemini", async () => {
+    const calls: { url: string; model: string }[] = [];
+    const llm = createLlmClient({
+      db,
+      keys: { gemini: "g", openrouter: "o" },
+      fetch: (async (url: string, init: RequestInit) => {
+        calls.push({ url, model: JSON.parse(init.body as string).model });
+        return chatOk("{}");
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    const out = await llm.chat({ ...chatArgs, provider: "openrouter", model: "anthropic/claude-sonnet-5.5" });
+    expect(out).toMatchObject({ provider: "openrouter", model: "anthropic/claude-sonnet-5.5" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("openrouter.ai");
+  });
+
+  it("an OpenRouter-only call does not fall back to Gemini when it fails", async () => {
+    const calls: string[] = [];
+    const llm = createLlmClient({
+      db,
+      keys: { gemini: "g", openrouter: "o" },
+      fetch: (async (url: string) => {
+        calls.push(url);
+        return json({}, 400);
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    await expect(llm.chat({ ...chatArgs, provider: "openrouter", model: "x/y" })).rejects.toBeInstanceOf(LlmError);
+    expect(calls.every((u) => u.includes("openrouter.ai"))).toBe(true);
+  });
+
   it("a cache hit makes no call and writes no row", async () => {
     const { llm, fetchMock } = harness([() => chatOk('{"relation":"same"}')]);
     await llm.chat({ ...chatArgs, jsonSchema: schema, cacheKey: "k1" });

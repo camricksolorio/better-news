@@ -6,6 +6,8 @@ import type { SnapshotArticle } from "./replay";
 export const MAX_CACHED_WINDOW_HOURS = 48;
 
 export type SimCache = {
+  // Calls fn(i, j, sim) for every cached pair with j < i (indexes into `sorted`).
+  eachPair: (fn: (i: number, j: number, sim: number) => void) => void;
   // Articles sorted by time (then guid), the order a replay processes them in.
   sorted: SnapshotArticle[];
   memberSim: (article: ArticleInput, member: ArticleInput) => number;
@@ -61,5 +63,12 @@ export function buildSimCache(snapshot: SnapshotArticle[], maxHours = MAX_CACHED
     return na === 0 || nb === 0 ? 0 : dot / Math.sqrt(na * nb);
   };
 
-  return { sorted, memberSim };
+  const eachPair = (fn: (i: number, j: number, sim: number) => void) => {
+    for (let i = 0; i < sorted.length; i++) {
+      const row = sims[i];
+      for (let k = 0; k < row.length; k++) fn(i, lo[i] + k, row[k]);
+    }
+  };
+
+  return { sorted, memberSim, eachPair };
 }

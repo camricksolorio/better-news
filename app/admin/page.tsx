@@ -17,7 +17,10 @@ export default async function AdminHome() {
         <li>
           <a href="/admin/explore" className="underline">Clustering explorer</a>: replay the snapshot at any thresholds (no API calls)
         </li>
-        <li>Labeling, stories, costs, and pipeline health will be linked here.</li>
+        <li>
+          <a href="/admin/label" className="underline">Label pairs</a>: judge same / related / different (the eval ground truth)
+        </li>
+        <li>Stories, costs, and pipeline health will be linked here.</li>
       </ul>
     </main>
   );
