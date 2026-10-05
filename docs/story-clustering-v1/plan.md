@@ -19,7 +19,7 @@ Checked 2026-09-27 against the live environment (eval data, volume, and prices r
 | Next 16 conventions | ✅ Checked. Admin gating uses `proxy.ts` (not `middleware.ts`) |
 | Product decisions | ✅ All locked (see TDD) |
 | Eval data | ✅ 6,200 rows from all 31 sources, ingested 2026-09-27 to 2026-10-03. Full days: 2026-09-29 to 2026-10-02 (~950–1,240 articles/day, ~4,300 total), which meets the ≥ 4-day gate. 9/27 is partial and 9/28 is nearly empty (the cron's redirect bug, fixed 2026-09-29), so the snapshot starts at 2026-09-29. Volume is ~1,000 articles/day, not the 150–400 first assumed |
-| Gemini billing tier | ✅ **Free tier** (confirmed). Expect per-minute and per-day request caps; the exact limits are looked up in Phase 1. Prompts may be used for training, which is fine for public news |
+| Gemini billing tier | ⚠️ **Free tier, and it is too small for embeddings.** `gemini-embedding-2` allows 1,000 inputs/day (each input in a batch counts), about our whole daily volume, so the backlog takes ~7 days on the free tier. Paid tier costs ~$0.05/day at our volume and removes the problem. Set `GEMINI_TIER=paid` once billing is on. Prompts may be used for training on the free tier, which is fine for public news |
 | Model prices | ✅ Looked up 2026-10-03 (see the TDD's LLM client section). Enter them in the config price table in Phase 1 |
 | Supabase backups | ⚠️ Checked 2026-10-04: the org is on the **free plan**, which has no downloadable or point-in-time backups (paid plans add daily backups). `feed_items` can't be re-fetched from the feeds, so Phase 1 adds a periodic export |
 
@@ -59,7 +59,7 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 - [x] `lib/llm.ts`: `chat` + `embed` (embeddings via the OpenAI-compatible endpoint with `dimensions: 768`, up to 100 inputs per request, 25 by default), `llm_calls` row per call, OpenRouter fallback for chat, verdict cache (verdict cache is stored on `llm_calls` as `cache_key` + `response`)
 - [x] `lib/llm.ts` failure policy (D23): timeouts (20s embedding, 30s chat), retries (up to 4 attempts, exponential backoff with jitter, bounded by the time left before the deadline), a per-provider, per-run circuit breaker (opens after 3 consecutive failures; chat falls back to OpenRouter; an embedding run ends early), and a batch is never dropped silently (retried, or its rows stay unprocessed for the next run)
   - [~] Tests: retry/backoff with jitter stays within bounds; the breaker opens after 3 consecutive failures and then fails fast; chat falls back and the fallback is logged; embedding ends the run early with rows left unprocessed (`embedding` null); no new batch starts after the deadline; cost computed from the price table; a cache hit makes no call (done except "embedding ends the run early with rows left unprocessed", which is covered in the embed stage tests)
-- [~] Look up the AI Studio free-tier request limits for `gemini-embedding-2` and `gemini-3.5-flash-lite`; compare with ~1,000 embeds and ~200–350 adjudication calls/day. `gemini-embedding-2` (read from the dashboard 2026-10-05): 100 requests/min, 30k tokens/min, 1,000 requests/day. Remaining: the `gemini-3.5-flash-lite` limits, and whether the daily cap counts requests or inputs (batch of 25 = 1 or 25); settle by embedding one batch and reading the dashboard
+- [x] Look up the AI Studio free-tier request limits for `gemini-embedding-2` (100 inputs/min, 30k tokens/min, 1,000 inputs/day; settled by the usage ledger 2026-10-05, see the TDD). Still to look up: `gemini-3.5-flash-lite` (needed for Phase 3)
 - [x] Fill the config price table with the prices in the TDD (`gemini-embedding-2`, `gemini-3.5-flash-lite`)
 
 **Pipeline plumbing**
@@ -72,7 +72,7 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 
 - [x] `lib/pipeline/embed.ts`: select ingested rows (`embedding IS NULL`, `embed_next_attempt_at` null or past, oldest first), build the input `"task: clustering | query: " + title + "\n\n" + cleanSummary.slice(0, 1000)`, embed in batches of 25 with `gemini-embedding-2`, and write `embedding`, `embedding_model`, and `embedding_input_version` in one `UPDATE` per batch; a batch that exhausts its retries sets `embed_attempts + 1`, `embed_error`, and `embed_next_attempt_at = now() + min(1h × 2^attempts, 12h)`; rows with 5 attempts are left out
   - [x] Tests: a successful batch writes all three columns; a failing batch increments attempts, records the error, and sets the next attempt without affecting other batches; a row with 5 attempts is not selected; a row whose next attempt is in the future is not selected; re-running is a no-op
-- [~] Embed backfill script that runs this logic over all existing rows (`pnpm embed:backfill`, written and smoke-tested against the test database; not yet run against production, which first needs the migrations applied)
+- [~] Embed backfill script that runs this logic over all existing rows (`pnpm embed:backfill`, running against production since 2026-10-05: 900 rows embedded before the free-tier daily cap stopped it; resumable, so it needs ~7 more days on the free tier or one run after switching to the paid tier)
 - [ ] Exit: all rows embedded; costs visible in `llm_calls`; invalid states rejected by the database
 
 ### Phase 2 — Baseline clustering
