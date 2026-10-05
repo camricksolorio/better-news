@@ -18,7 +18,8 @@
     "eval:snapshot": "tsx --env-file=.env --tsconfig tsconfig.json scripts/snapshot.ts",
     "eval:cluster": "tsx --tsconfig tsconfig.json scripts/eval-cluster.ts",
     "usage": "tsx --env-file=.env --tsconfig tsconfig.json scripts/usage.ts",
-    "eval:pairs": "tsx --tsconfig tsconfig.json scripts/generate-pairs.ts"
+    "eval:pairs": "tsx --tsconfig tsconfig.json scripts/generate-pairs.ts",
+    "eval:silver": "tsx --env-file=.env --tsconfig tsconfig.json scripts/silver-label.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",

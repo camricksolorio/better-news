@@ -26,6 +26,10 @@ export const PRICES_PER_MILLION: Record<string, { input: number; output: number 
   "gemini-embedding-2": { input: 0.2, output: 0 },
   "gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
+  // OpenRouter list prices, looked up 2026-10-05; used for silver labeling (D12, non-Gemini).
+  "anthropic/claude-sonnet-5.5": { input: 2, output: 10 },
+  "openai/gpt-5.6-terra": { input: 2, output: 12 },
+  "deepseek/deepseek-v4.1-flash": { input: 0.003, output: 2.4 },
 };
 
 export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number | null {
