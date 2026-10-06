@@ -19,6 +19,8 @@
     "eval:cluster": "tsx --tsconfig tsconfig.json scripts/eval-cluster.ts",
     "usage": "tsx --env-file=.env --tsconfig tsconfig.json scripts/usage.ts",
     "eval:pairs": "tsx --tsconfig tsconfig.json scripts/generate-pairs.ts",
+    "eval:semeval": "tsx --tsconfig tsconfig.json scripts/semeval-fetch.ts",
+    "eval:wcep": "tsx --tsconfig tsconfig.json scripts/wcep-convert.ts",
     "eval:silver": "tsx --env-file=.env --tsconfig tsconfig.json scripts/silver-label.ts",
     "eval:promo": "tsx --tsconfig tsconfig.json scripts/spike-promo.ts",
     "eval:knn": "tsx --tsconfig tsconfig.json scripts/spike-knn.ts",

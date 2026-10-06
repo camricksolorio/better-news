@@ -121,10 +121,10 @@ Design: TDD D31–D37 (2026-10-05). Embeddings only find a candidate story; a cl
 
 **Development data**
 
-- [ ] Show the user the 8 human `same` pairs more than 12h apart; record whether the feed timestamps are wrong (reposts, time zones)
-- [ ] Script to download SemEval-2022 Task 8, keep the English–English pairs, fetch the article URLs, and convert them to the pair format (title plus the first 1,000 characters) in `eval/public/` (gitignored); record how many pairs survive dead links
-- [ ] Script for WCEP, editor-cited articles only: same-day, same-category pairs from different events as `different`; within-event pairs as candidate `same`
-- [ ] Spot-check a sample of converted pairs against the D31 definition; set the SemEval score cut points for `same` / `related` / `different`
+- [x] Show the user the 8 human `same` pairs more than 12h apart. The timestamps are real (published times, gaps 14–32h); the pairs were follow-ups or reactions under D31, so the user removed those 8 human labels (file and database). Silver labels (3 `same`, 5 `related`) now apply to them
+- [~] `pnpm eval:semeval` (`scripts/semeval-fetch.ts`, `lib/eval/semeval.ts`): downloads the Zenodo CSVs (2,036 English pairs), fetches pages from the Internet Archive links, writes `eval/public/semeval-pairs.jsonl`; resumable, 429s never cached. Built and unit-tested, but not run: the Internet Archive returned 429 to this IP after a 20-pair test. Left: retry later with `--concurrency 1` and record how many pairs survive dead links
+- [x] `pnpm eval:wcep` (`scripts/wcep-convert.ts`, `lib/eval/wcep.ts`) from the user-supplied extract in `wcep-extracted-download/` (gitignored): editor-cited articles only, junk filter (non-English, boilerplate, social and bulletin hosts, truncated titles), within-event pairs as `same`, same-day same-category different-event pairs as `different`. 3,410 pairs (1,705 each). Per-article `time` is unreliable, so articles carry the WCEP event day and WCEP cannot test the 12h window
+- [~] Spot-check against D31. WCEP done (2 samples of 20 `same` pairs): after the junk filter about 75% clean, 20% borderline (reactions and follow-ups), 5% wrong (bundled events). The user agreed to use WCEP `same` as a noisy positive set for development only; disagreements are reviewed by hand, not counted as adjudicator errors. Left: SemEval cut points (provisional: `same` ≤ 1.5, `different` ≥ 3.5, middle dropped)
 - [ ] Re-make the silver labels for the 206 pairs without a human label using the D31 prompt (~$0.03; needs a cost go-ahead)
 
 **Adjudicator**
