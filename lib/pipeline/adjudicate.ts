@@ -108,7 +108,12 @@ export function parseChatVerdict(json: unknown): Pick<Verdict, "relation" | "pSa
   return { relation: v.relation, pSame: clamp01(v.p_same), reason: String(v.reason ?? "").slice(0, 400) };
 }
 
-export function createAdjudicator(llm: Pick<LlmClient, "chat" | "classify">, cfg: AdjudicatorConfig = DEFAULT_ADJUDICATOR) {
+// `purpose` labels the calls in llm_calls (the comparison script uses its own so its spend is easy to find).
+export function createAdjudicator(
+  llm: Pick<LlmClient, "chat" | "classify">,
+  cfg: AdjudicatorConfig = DEFAULT_ADJUDICATOR,
+  opts: { purpose?: string } = {},
+) {
   // Throws when the call itself fails after retries (the article then stays unclustered, D34).
   // Unreadable output returns relation "invalid", which the join rule treats as a rejection.
   async function adjudicate(
@@ -117,7 +122,7 @@ export function createAdjudicator(llm: Pick<LlmClient, "chat" | "classify">, cfg
     context?: { articleId?: string; storyId?: string },
   ): Promise<Verdict> {
     const key = cacheKey(article, member, cfg);
-    const purpose = "adjudicate";
+    const purpose = opts.purpose ?? "adjudicate";
     if (cfg.model.startsWith("jev")) {
       const res = await llm.classify({
         state: pairText(article, member),
