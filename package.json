@@ -9,7 +9,23 @@
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "embed:backfill": "tsx --env-file=.env --tsconfig tsconfig.json scripts/embed-backfill.ts",
+    "labels:export": "tsx --env-file=.env --tsconfig tsconfig.json scripts/export-labels.ts",
+    "labels:import": "tsx --env-file=.env --tsconfig tsconfig.json scripts/import-labels.ts",
+    "eval:snapshot": "tsx --env-file=.env --tsconfig tsconfig.json scripts/snapshot.ts",
+    "eval:cluster": "tsx --env-file=.env --tsconfig tsconfig.json scripts/eval-cluster.ts",
+    "usage": "tsx --env-file=.env --tsconfig tsconfig.json scripts/usage.ts",
+    "eval:pairs": "tsx --tsconfig tsconfig.json scripts/generate-pairs.ts",
+    "eval:semeval": "tsx --tsconfig tsconfig.json scripts/semeval-fetch.ts",
+    "eval:wcep": "tsx --tsconfig tsconfig.json scripts/wcep-convert.ts",
+    "eval:compare": "tsx --env-file=.env --tsconfig tsconfig.json scripts/compare-adjudicators.ts",
+    "eval:audit": "tsx --env-file=.env --tsconfig tsconfig.json scripts/audit-sample.ts",
+    "eval:silver": "tsx --env-file=.env --tsconfig tsconfig.json scripts/silver-label.ts",
+    "eval:knn": "tsx --tsconfig tsconfig.json scripts/spike-knn.ts",
+    "eval:prefix": "tsx --env-file=.env --tsconfig tsconfig.json scripts/spike-prefix.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",
@@ -29,7 +45,8 @@
     "eslint-config-next": "16.3.6",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.3"
   },
   "packageManager": "pnpm@11.10.0"
 }

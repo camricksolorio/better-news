@@ -14,8 +14,13 @@ A news aggregator that ingests RSS feeds from a spread of outlets (left,
 center, right, international, business/tech — see `feeds.config.ts`) into a
 single feed, so a reader sees more than one editorial voice on the same
 story. Longer-term goal: cluster articles across outlets about the same
-event (Ground News-style) — see `SOURCE-EXPANSION.md` for the source
-research behind this.
+event (Ground News-style).
+
+## Feature and dev work
+
+All feature/dev work is documented under `docs/<feature-name>/` as `prd.md`,
+`tdd.md`, and `plan.md`. Read `docs/AGENTS.md` for the conventions before
+starting or planning any work.
 
 ## Stack
 

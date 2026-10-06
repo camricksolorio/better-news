@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791146364785,
+      "tag": "0000_friendly_living_tribunal",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791146389447,
+      "tag": "0001_enable_vector",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791146390031,
+      "tag": "0002_story_clustering",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791146390613,
+      "tag": "0003_invariant_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791146498887,
+      "tag": "0004_llm_cache_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791209507863,
+      "tag": "0005_llm_usage_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791256349078,
+      "tag": "0006_join_audit_items",
+      "breakpoints": true
+    }
+  ]
+}
