@@ -315,7 +315,7 @@ The "doesn't belong" admin action writes both a label and a `manual` assignment,
 
 1. **Snapshot:** `scripts/snapshot.ts` exports ≥ 4 days of `feed_items` and embeddings to `eval/snapshot-YYYY-MM-DD.jsonl`. All tuning runs against a fixed snapshot.
 2. **Pair labeling, stratified by similarity:** ~300 pairs across buckets (0.6–0.7, 0.7–0.8, 0.8–0.9, 0.9+), plus pairs the pipeline merged. Likely `related` pairs are deliberately oversampled (same-topic pairs published 12–48h apart), because random pairs would be ~99% `different`.
-3. **Silver labels, then human verification:** a strong non-Gemini model via OpenRouter labels all pairs (about $1–3 once). A human reviews every silver-vs-pipeline disagreement plus a random ~50 others, to measure the silver labeler's reliability. Human labels always win. Budget about 1–2 hours of human time.
+3. **Silver labels, then human verification:** a non-Gemini model labels all pairs: OpenAI `gpt-4o-mini`, called directly through its Chat Completions API with strict structured outputs (chosen 2026-10-05; about $0.04 once at $0.15 / $0.60 per 1M tokens). The LLM client has a third provider, `openai`, used only for this and never as a fallback. A human reviews every silver-vs-pipeline disagreement plus a random ~50 others, to measure the silver labeler's reliability. Human labels always win. Budget about 1–2 hours of human time.
 4. **Replay harness:** `pnpm eval:cluster --snapshot … --t-high … --t-low … --window-hours …` reports:
    - Pairwise precision / recall / F1 (headline), with `related` counted as a negative
    - Related-leak rate: the share of `related` pairs wrongly merged
