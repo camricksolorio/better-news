@@ -2,6 +2,10 @@
 
 export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+export const OPENAI_BASE_URL = "https://api.openai.com/v1";
+
+// Silver labeling (D12): a non-Gemini model so it does not share Gemini's blind spots.
+export const SILVER_MODEL = "gpt-4o-mini";
 
 export const EMBEDDING_MODEL = "gemini-embedding-2";
 export { EMBEDDING_DIMENSIONS } from "@/db/schema";
@@ -26,7 +30,8 @@ export const PRICES_PER_MILLION: Record<string, { input: number; output: number 
   "gemini-embedding-2": { input: 0.2, output: 0 },
   "gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
-  // OpenRouter list prices, looked up 2026-10-05; used for silver labeling (D12, non-Gemini).
+  // OpenAI price for silver labeling, looked up 2026-10-05 (the OpenRouter ones are kept for reference).
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
   "anthropic/claude-sonnet-5.5": { input: 2, output: 10 },
   "openai/gpt-5.6-terra": { input: 2, output: 12 },
   "deepseek/deepseek-v4.1-flash": { input: 0.003, output: 2.4 },

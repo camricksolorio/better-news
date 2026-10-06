@@ -30,7 +30,7 @@ function harness(
   });
   const llm = createLlmClient({
     db,
-    keys: { gemini: "g", openrouter: "o" },
+    keys: { gemini: "g", openrouter: "o", openai: "k" },
     fetch: fetchMock as unknown as typeof fetch,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -237,6 +237,54 @@ describe("chat", () => {
     });
     await expect(llm.chat({ ...chatArgs, provider: "openrouter", model: "x/y" })).rejects.toBeInstanceOf(LlmError);
     expect(calls.every((u) => u.includes("openrouter.ai"))).toBe(true);
+  });
+
+  it("provider openai calls api.openai.com with its own key, strict json_schema, and temperature", async () => {
+    const seen: { url: string; auth: string; body: Record<string, unknown> }[] = [];
+    const llm = createLlmClient({
+      db,
+      keys: { gemini: "g", openrouter: "o", openai: "sk-test" },
+      fetch: (async (url: string, init: RequestInit) => {
+        seen.push({ url, auth: (init.headers as Record<string, string>).Authorization, body: JSON.parse(init.body as string) });
+        return chatOk('{"relation":"same"}');
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    const out = await llm.chat({ ...chatArgs, provider: "openai", model: "gpt-4o-mini", temperature: 0, jsonSchema: schema });
+    expect(out).toMatchObject({ provider: "openai", model: "gpt-4o-mini", json: { relation: "same" } });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toBe("https://api.openai.com/v1/chat/completions");
+    expect(seen[0].auth).toBe("Bearer sk-test");
+    expect(seen[0].body).toMatchObject({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_schema", json_schema: { name: "verdict", strict: true } },
+    });
+    expect(seen[0].body.usage).toBeUndefined(); // the usage flag is OpenRouter-only
+    const [row] = await db.select().from(llmCalls);
+    expect(row).toMatchObject({ provider: "openai", model: "gpt-4o-mini", ok: true });
+    expect(row.costUsd).toBeCloseTo((1000 * 0.15 + 100 * 0.6) / 1_000_000);
+  });
+
+  it("an OpenAI call never falls back to Gemini or OpenRouter", async () => {
+    const calls: string[] = [];
+    const llm = createLlmClient({
+      db,
+      keys: { gemini: "g", openrouter: "o", openai: "k" },
+      fetch: (async (url: string) => {
+        calls.push(url);
+        return json({}, 400);
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+    });
+    await expect(llm.chat({ ...chatArgs, provider: "openai", model: "gpt-4o-mini" })).rejects.toBeInstanceOf(LlmError);
+    expect(calls.every((u) => u.includes("api.openai.com"))).toBe(true);
+  });
+
+  it("treats an OpenAI refusal as a non-retryable error", async () => {
+    const { llm, fetchMock } = harness([() => json({ choices: [{ message: { content: null, refusal: "I cannot help with that." } }] })]);
+    await expect(llm.chat({ ...chatArgs, provider: "openai", model: "gpt-4o-mini" })).rejects.toThrow(/refused/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("a cache hit makes no call and writes no row", async () => {

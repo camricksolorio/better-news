@@ -11,13 +11,14 @@ import {
   EMBED_MAX_INPUTS,
   FAILURE_POLICY,
   GEMINI_BASE_URL,
+  OPENAI_BASE_URL,
   OPENROUTER_BASE_URL,
   defaultEmbedQuota,
   estimateCostUsd,
   type EmbedQuota,
 } from "./llm-config";
 
-export type Provider = "gemini" | "openrouter";
+export type Provider = "gemini" | "openrouter" | "openai";
 
 // What a 429 said about the quota that was hit (Google's QuotaFailure detail).
 export type QuotaInfo = { id: string; metric: string; scope: "minute" | "day" | "other" };
@@ -92,7 +93,7 @@ export type LlmClientOptions = {
   db: Db;
   // Epoch ms after which no new attempt starts. Typically maxDuration minus a 10s margin.
   deadline?: number;
-  keys?: { gemini?: string; openrouter?: string };
+  keys?: { gemini?: string; openrouter?: string; openai?: string };
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -116,11 +117,12 @@ export function createLlmClient(options: LlmClientOptions) {
   const keys = {
     gemini: options.keys?.gemini ?? process.env.GOOGLE_GEMINI_API_KEY,
     openrouter: options.keys?.openrouter ?? process.env.OPEN_ROUTER_API_KEY,
+    openai: options.keys?.openai ?? process.env.OPENAI_API_KEY,
   };
   const deadline = options.deadline ?? Number.POSITIVE_INFINITY;
   const policy = FAILURE_POLICY;
 
-  const consecutiveFailures: Record<Provider, number> = { gemini: 0, openrouter: 0 };
+  const consecutiveFailures: Record<Provider, number> = { gemini: 0, openrouter: 0, openai: 0 };
   // Models whose per-day quota is spent this run: later calls fail fast without a request.
   const dailyExhausted = new Set<string>();
   const embedQuota = options.embedQuota === undefined ? defaultEmbedQuota() : options.embedQuota;
@@ -162,7 +164,8 @@ export function createLlmClient(options: LlmClientOptions) {
     }
   }
 
-  const baseUrl = (p: Provider) => (p === "gemini" ? GEMINI_BASE_URL : OPENROUTER_BASE_URL);
+  const baseUrl = (p: Provider) =>
+    p === "gemini" ? GEMINI_BASE_URL : p === "openai" ? OPENAI_BASE_URL : OPENROUTER_BASE_URL;
 
   function breakerOpen(provider: Provider) {
     return consecutiveFailures[provider] >= policy.breakerThreshold;
@@ -367,10 +370,11 @@ export function createLlmClient(options: LlmClientOptions) {
   async function chatOnce(
     provider: Provider,
     model: string,
-    args: { messages: ChatMessage[]; jsonSchema?: { name: string; schema: object } },
+    args: { messages: ChatMessage[]; jsonSchema?: { name: string; schema: object }; temperature?: number },
   ): Promise<RawResult<string>> {
     return withRetries<string>(provider, model, async () => {
       const body: Record<string, unknown> = { model, messages: args.messages };
+      if (args.temperature !== undefined) body.temperature = args.temperature;
       if (args.jsonSchema) {
         body.response_format = {
           type: "json_schema",
@@ -379,9 +383,12 @@ export function createLlmClient(options: LlmClientOptions) {
       }
       if (provider === "openrouter") body.usage = { include: true };
       const raw = (await request(provider, "/chat/completions", body, policy.chatTimeoutMs)) as {
-        choices?: { message?: { content?: string } }[];
+        choices?: { message?: { content?: string | null; refusal?: string | null } }[];
       };
-      const content = raw.choices?.[0]?.message?.content;
+      const message = raw.choices?.[0]?.message;
+      // OpenAI structured outputs report a safety refusal here instead of content; retrying will not help.
+      if (message?.refusal) throw new LlmError(`${provider} refused: ${message.refusal.slice(0, 200)}`, provider, false);
+      const content = message?.content;
       if (typeof content !== "string") {
         throw new LlmError(`${provider} returned no message content`, provider, true);
       }
@@ -404,9 +411,10 @@ export function createLlmClient(options: LlmClientOptions) {
 
   // Chat goes to Gemini first, then falls back to OpenRouter; both attempts are recorded.
   async function chat(args: {
-    // "openrouter" skips Gemini and the fallback: the call goes to `model` on OpenRouter only
-    // (silver labeling uses a non-Gemini model on purpose, D12).
+    // "openrouter" or "openai" skips Gemini and the fallback: the call goes to `model` on that
+    // provider only (silver labeling uses a non-Gemini model on purpose, D12).
     provider?: Provider;
+    temperature?: number;
     model: string;
     fallbackModel?: string;
     messages: ChatMessage[];
@@ -424,11 +432,9 @@ export function createLlmClient(options: LlmClientOptions) {
       }
     }
 
-    const attempts: { provider: Provider; model: string }[] =
-      args.provider === "openrouter"
-        ? [{ provider: "openrouter", model: args.model }]
-        : [{ provider: "gemini", model: args.model }];
-    if (args.provider !== "openrouter" && keys.openrouter) {
+    const only = args.provider && args.provider !== "gemini" ? args.provider : null;
+    const attempts: { provider: Provider; model: string }[] = [{ provider: only ?? "gemini", model: args.model }];
+    if (!only && keys.openrouter) {
       attempts.push({ provider: "openrouter", model: args.fallbackModel ?? ADJUDICATION_FALLBACK_MODEL });
     }
 

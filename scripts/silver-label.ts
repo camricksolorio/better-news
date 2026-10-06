@@ -1,7 +1,7 @@
-// Silver-labels the stratified pairs with a non-Gemini model through OpenRouter and stores the
+// Silver-labels the stratified pairs with a non-Gemini model (OpenAI gpt-4o-mini) and stores the
 // results in eval_pair_labels (labeler "model:<id>"). This spends money, so it only prints an
 // estimate unless --confirm is passed.
-// Usage: pnpm eval:silver [--model anthropic/claude-sonnet-5.5] [--confirm] [--limit 10]
+// Usage: pnpm eval:silver [--model gpt-4o-mini] [--confirm] [--limit 10]
 import { parseArgs } from "node:util";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { inArray } from "drizzle-orm";
@@ -9,7 +9,7 @@ import postgres from "postgres";
 import * as schema from "@/db/schema";
 import { evalPairLabels, feedItems } from "@/db/schema";
 import { createLlmClient } from "@/lib/llm";
-import { PRICES_PER_MILLION } from "@/lib/llm-config";
+import { PRICES_PER_MILLION, SILVER_MODEL } from "@/lib/llm-config";
 import { loadPairFile, pairKey } from "@/lib/labeling";
 import {
   SILVER_JSON_SCHEMA,
@@ -23,7 +23,7 @@ async function main() {
   const { values } = parseArgs({
     options: { model: { type: "string" }, confirm: { type: "boolean" }, limit: { type: "string" } },
   });
-  const model = values.model ?? "anthropic/claude-sonnet-5.5";
+  const model = values.model ?? SILVER_MODEL;
   const price = PRICES_PER_MILLION[model];
   if (!price) throw new Error(`No price for ${model}; add it to PRICES_PER_MILLION first`);
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
@@ -31,6 +31,9 @@ async function main() {
   const client = postgres(process.env.DATABASE_URL, { prepare: false, max: 2 });
   const db = drizzle(client, { schema });
   const labeler = `model:${model}`;
+  // Models with a slash (anthropic/..., openai/...) are OpenRouter ids; a bare id goes to OpenAI.
+  const provider = model.includes("/") ? "openrouter" : "openai";
+  if (values.confirm && provider === "openai" && !process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
 
   let pairs = loadPairFile();
   if (values.limit) pairs = pairs.slice(0, Number(values.limit));
@@ -64,7 +67,8 @@ async function main() {
     for (let p = queue.shift(); p; p = queue.shift()) {
       try {
         const res = await llm.chat({
-          provider: "openrouter",
+          provider,
+          temperature: 0,
           model,
           messages: silverMessages(p),
           jsonSchema: SILVER_JSON_SCHEMA,
