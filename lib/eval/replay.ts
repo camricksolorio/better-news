@@ -1,5 +1,5 @@
 // Replays a snapshot through the same assignment core production uses (D11), then scores it.
-import { assignArticle, type ArticleInput, type ClusterConfig, type StoryState } from "@/lib/pipeline/assign";
+import { assignArticle, type Adjudicator, type ArticleInput, type ClusterConfig, type StoryState } from "@/lib/pipeline/assign";
 import { createMemoryStore } from "@/lib/pipeline/store-memory";
 import { computeMetrics, type Metrics, type PairLabel } from "./metrics";
 
@@ -25,6 +25,10 @@ export type Decision = {
 };
 
 export type ReplayOptions = {
+  // A real classifier. Overrides `gray`. A call that fails leaves that article unclustered, as in production;
+  // an error named in `abortOn` stops the whole replay (a spent call budget).
+  adjudicate?: Adjudicator;
+  abortOn?: (e: unknown) => boolean;
   // What to do with gray-zone articles until the LLM exists: start a new story (conservative)
   // or join the best candidate (the optimistic bound: the LLM says yes every time).
   gray?: "new" | "join";
@@ -41,6 +45,8 @@ export type ReplayResult = {
   grayCount: number;
   grayShare: number;
   clusterOf: Map<string, string>;
+  // Articles left unclustered because a classifier call failed.
+  failed: string[];
 };
 
 export async function replay(
@@ -55,6 +61,7 @@ export async function replay(
     (x, y) => new Date(x.time).getTime() - new Date(y.time).getTime() || x.guid.localeCompare(y.guid),
   );
   const clusterOf = new Map<string, string>();
+  const failed: string[] = [];
 
   for (const a of sorted) {
     const input: ArticleInput = {
@@ -64,12 +71,25 @@ export async function replay(
       embedding: a.embedding,
       thin: a.thin,
     };
-    // Baseline: the gray zone is counted and treated conservatively (new story) until Phase 3.
-    const outcome = await assignArticle(store, input, cfg, async (_article, _memberId, candidate) => {
+    // Without a classifier: "new" (nothing joins) or "join" (the classifier says yes every time).
+    const stub: Adjudicator = async (_article, _memberId, candidate) => {
       grayIds.set(a.guid, candidate.story.id);
       return { same: options.gray === "join" };
-    });
-    clusterOf.set(a.guid, outcome.storyId);
+    };
+    const real = options.adjudicate;
+    const adjudicate: Adjudicator = real
+      ? async (article, memberId, candidate) => {
+          grayIds.set(a.guid, candidate.story.id);
+          return real(article, memberId, candidate);
+        }
+      : stub;
+    try {
+      const outcome = await assignArticle(store, input, cfg, adjudicate);
+      clusterOf.set(a.guid, outcome.storyId);
+    } catch (e) {
+      if (!real || options.abortOn?.(e)) throw e;
+      failed.push(a.guid);
+    }
   }
 
   const decisions = new Map<string, Decision>();
@@ -93,5 +113,6 @@ export async function replay(
     grayCount: grayIds.size,
     grayShare: sorted.length === 0 ? 0 : grayIds.size / sorted.length,
     clusterOf,
+    failed,
   };
 }
