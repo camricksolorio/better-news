@@ -17,7 +17,9 @@ Checked 2026-09-27 against the live environment (eval data, volume, and prices r
 | `GOOGLE_GEMINI_API_KEY` | ✅ Valid. `gemini-embedding-2` returned 768-dim unit vectors on both the native and OpenAI-compatible endpoints (verified 2026-10-03); `gemini-3.5-flash-lite` answered via the OpenAI-compatible endpoint |
 | `OPEN_ROUTER_API_KEY` | ✅ Valid. Accepted a paid-model request; key limit $100, $0 used |
 | Next 16 conventions | ✅ Checked. Admin gating uses `proxy.ts` (not `middleware.ts`) |
-| Product decisions | ✅ All locked (see TDD) |
+| Product decisions | ✅ All locked (see TDD). Revised 2026-10-05 after the labeling session: stricter definition with opinion and analysis as `related`, embeddings only retrieve candidates, 12h window, recall has no bar (TDD D31–D37) |
+| `OPENAI_API_KEY` | ✅ Valid. Used for the `gpt-4o-mini` silver labels 2026-10-05 |
+| `JEV_API_KEY` | ⚠️ Added to the local `.env` 2026-10-05; not yet verified with a call. TypeSafe's API shape and pricing page still to read |
 | Eval data | ✅ 6,200 rows from all 31 sources, ingested 2026-09-27 to 2026-10-03. Full days: 2026-09-29 to 2026-10-02 (~950–1,240 articles/day, ~4,300 total), which meets the ≥ 4-day gate. 9/27 is partial and 9/28 is nearly empty (the cron's redirect bug, fixed 2026-09-29), so the snapshot starts at 2026-09-29. Volume is ~1,000 articles/day, not the 150–400 first assumed |
 | Gemini billing tier | ✅ **Moved to the paid tier 2026-10-05** (API key capped at $5). The free tier was too small for embeddings: `gemini-embedding-2` allows 1,000 inputs/day (each input in a batch counts), about our whole daily volume, so the backlog would have taken ~7 days. `GEMINI_TIER=paid` is set locally (it turns off client-side pacing); it also has to be set on Vercel when `/api/embed` ships in Phase 4. Approved uses: embeddings now; `gemini-3.5-flash-lite` only with the user's go-ahead. Prompts may be used for training on the free tier, which is fine for public news |
 | Model prices | ✅ Looked up 2026-10-03 (see the TDD's LLM client section). Enter them in the config price table in Phase 1 |
@@ -34,7 +36,7 @@ ingestion needed for the Phase 2 snapshot exist as of 2026-10-02.
 |---|---|---|
 | **1. Foundations** | Migration workflow + pgvector; full schema with constraints and triggers; `lib/text.ts`; `lib/llm.ts` with the failure policy; lease and run-record helpers; embed stage logic + backfill script | All rows embedded; costs visible in `llm_calls`; invalid states rejected by the database |
 | **2. Baseline clustering** | Embedding-only assignment with window-fit candidates; snapshot; admin auth + labeling UI; label export/import; silver labels; replay harness; open-risk spikes (prefix, filtered kNN, promo filter) | Baseline P/R/related-leak recorded |
-| **3. LLM adjudication** | Gray-zone step + verdict cache; sweep thresholds + window | Meets clustering ship bar on snapshot |
+| **3. LLM adjudication** | Public development data; adjudicator comparison (gpt-4o-mini, flash-lite, jev); classifier decides every join; verdict cache; sweep `T_low`, τ, window; join audit | Precision ≥ 0.95 on the join audit and the human reference pairs, related-leak ≤ 10%, < $0.50/day; recall reported |
 | **4. Wire it up** | `/api/embed`, `/api/cluster`, and `/api/health` per the TDD contracts; workflow with loud failure; stories inspector, cost panel, pipeline health panel | 3 days unattended, no failed runs, within budget, a stall is caught |
 
 ### Phase 1 — Foundations
@@ -111,12 +113,42 @@ The snapshot uses full ingestion days from 2026-09-29 onward (earlier days are p
 
 ### Phase 3 — LLM adjudication
 
-- [ ] Adjudication prompt with the "same story" definition verbatim; JSON schema output; join only on `same` with confidence ≥ 0.7
-- [ ] Thin-article rule: no embedding-only auto-join
-- [ ] Verdict cache so sweeps don't pay twice
-  - [ ] Tests: thin article above `T_low` always routes to the LLM; invalid JSON or low confidence yields a new story
-- [ ] Sweep `T_low`, `T_high` (include values up to ~0.94, since 0.88 admitted some different-event pairs in early testing), and the window; pick the cheapest config that meets the bar
-- [ ] Exit: precision ≥ 0.95, recall ≥ 0.80, related-leak ≤ 10%, < $0.50/day on the snapshot
+Design: TDD D31–D37 (2026-10-05). Embeddings only find a candidate story; a classifier decides every join by comparing the article with the story's first article and its most similar member; window 12h; precision is confirmed by a join audit.
+
+**Decisions and docs**
+
+- [x] User approved 2026-10-05: the stricter "same story" wording, opinion and analysis as `related`, no embedding-only joins, a 12h window, no recall bar, public datasets for development data, and the adjudicator comparison (including spend on the 94 human-labeled pairs). TDD updated (D4 and D6 superseded; D31–D37 added; risks, costs, and open questions revised)
+
+**Development data**
+
+- [ ] Show the user the 8 human `same` pairs more than 12h apart; record whether the feed timestamps are wrong (reposts, time zones)
+- [ ] Script to download SemEval-2022 Task 8, keep the English–English pairs, fetch the article URLs, and convert them to the pair format (title plus the first 1,000 characters) in `eval/public/` (gitignored); record how many pairs survive dead links
+- [ ] Script for WCEP, editor-cited articles only: same-day, same-category pairs from different events as `different`; within-event pairs as candidate `same`
+- [ ] Spot-check a sample of converted pairs against the D31 definition; set the SemEval score cut points for `same` / `related` / `different`
+- [ ] Re-make the silver labels for the 206 pairs without a human label using the D31 prompt (~$0.03; needs a cost go-ahead)
+
+**Adjudicator**
+
+- [ ] Read TypeSafe's API docs and pricing page; add a `jev` provider to `lib/llm.ts` using `JEV_API_KEY`; add jev and `gpt-4o-mini` to the price table
+- [ ] Look up the `gemini-3.5-flash-lite` rate limits (carried over from Phase 1)
+- [ ] `adjudicate({ article, member })` wrapper returning `{ relation, pSame, reason? }` for the configured adjudicator; prompt v2 with the D31 definition verbatim; chat models use strict JSON `{ relation, p_same, reason }`
+- [ ] Verdict cache keyed on the unordered article pair plus model and prompt version, so sweeps don't pay twice
+  - [ ] Tests (fakes, no spend): invalid output counts as a rejection; a cache hit makes no call; the pair key is order-independent; a fallback never switches model
+- [ ] Classifier comparison on the development and reference pairs: `gpt-4o-mini` (prompt v2), `gemini-3.5-flash-lite`, jev, and two-model agreement. Report precision against τ, recall at ≥ 0.97 development precision, and thin-article precision. The 94 reference pairs are approved; give a cost estimate and wait for a go-ahead before the development-set runs
+- [ ] Pick the adjudicator and τ; confirm on the reference pairs, where human labels win over public data
+
+**Assignment**
+
+- [ ] `lib/pipeline/assign.ts`: remove the `tHigh` auto-join; `tLow` 0.84 and `windowHours` 12 as defaults; adjudicate the best candidate against its first article and its most similar member (one call when they are the same article); join only if both are `same` with `p_same ≥ τ`; otherwise a new story; a call that fails after retries leaves the article unclustered; log both verdicts in `story_assignments`
+  - [ ] Tests: nothing joins without the classifier; one call when the first article is also the most similar member; a single `related` verdict blocks the join; `p_same` below τ starts a new story; a failure leaves the article unclustered; thin articles go through the same path; a 12h window blocks a join at 13h
+- [ ] Replay harness: `--adjudicator` and `--tau` flags, classifier share and calls, cost per 100 articles, thin-article precision, and an exact 95% lower bound on precision
+- [ ] K control in the explorer and harness (kNN slot dominance, TDD risk); compare K = 10 with 30–50 on recall
+
+**Tuning and audit**
+
+- [ ] Sweep `T_low` (0.80–0.88), τ, and the window (12, 18, 24, 36h); keep 12h unless a longer window keeps precision ≥ 0.95; re-measure the share of articles reaching the classifier
+- [ ] Join-audit queue in `/admin/label`; sample ~150 random joins from the chosen config's replay; the user labels them
+- [ ] Exit: precision ≥ 0.95 on the join audit (lower bound reported; at most 2 errors in 150 for the bound to clear 0.95) and on the human reference pairs; related-leak ≤ 10%; < $0.50/day; recall reported
 
 ### Phase 4 — Wire it up
 
