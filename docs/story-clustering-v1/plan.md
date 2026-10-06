@@ -129,7 +129,7 @@ Design: TDD D31–D37 (2026-10-05). Embeddings only find a candidate story; a cl
 
 **Adjudicator**
 
-- [ ] Read TypeSafe's API docs and pricing page; add a `jev` provider to `lib/llm.ts` using `JEV_API_KEY`; add jev and `gpt-4o-mini` to the price table
+- [x] Read TypeSafe's API docs; added the `jev` provider: `llm.classify({ state, questions })` posts typed questions to `POST https://api.typesafe.ai/v1/systemone` with `JEV_API_KEY`, records the resolved model (e.g. `jev-1.13.0`) and cost ($0.042 per 1M input tokens, output free), caches by key, retries 429/5xx/529, no fallback to another provider. Unit-tested with fakes; no live call made yet (needs a go-ahead, a fraction of a cent). `gpt-4o-mini` was already in the price table
 - [ ] Look up the `gemini-3.5-flash-lite` rate limits (carried over from Phase 1)
 - [ ] `adjudicate({ article, member })` wrapper returning `{ relation, pSame, reason? }` for the configured adjudicator; prompt v2 with the D31 definition verbatim; chat models use strict JSON `{ relation, p_same, reason }`
 - [ ] Verdict cache keyed on the unordered article pair plus model and prompt version, so sweeps don't pay twice

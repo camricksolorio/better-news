@@ -3,6 +3,9 @@
 export const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export const OPENAI_BASE_URL = "https://api.openai.com/v1";
+export const JEV_BASE_URL = "https://api.typesafe.ai/v1";
+// TypeSafe's flagship classifier; "jev-latest" is an alias that responses resolve to a version (e.g. "jev-1.13.0").
+export const JEV_MODEL = "jev-latest";
 
 // Silver labeling (D12): a non-Gemini model so it does not share Gemini's blind spots.
 export const SILVER_MODEL = "gpt-4o-mini";
@@ -32,13 +35,15 @@ export const PRICES_PER_MILLION: Record<string, { input: number; output: number 
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   // OpenAI price for silver labeling, looked up 2026-10-05 (the OpenRouter ones are kept for reference).
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  // TypeSafe jev: $0.042 per 1M input tokens, output free (docs, 2026-10-05). Resolved versions ("jev-1.13.0") use this price too.
+  "jev-latest": { input: 0.042, output: 0 },
   "anthropic/claude-sonnet-5.5": { input: 2, output: 10 },
   "openai/gpt-5.6-terra": { input: 2, output: 12 },
   "deepseek/deepseek-v4.1-flash": { input: 0.003, output: 2.4 },
 };
 
 export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number | null {
-  const price = PRICES_PER_MILLION[model];
+  const price = PRICES_PER_MILLION[model] ?? (model.startsWith("jev-") ? PRICES_PER_MILLION[JEV_MODEL] : undefined);
   if (!price) return null;
   return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }

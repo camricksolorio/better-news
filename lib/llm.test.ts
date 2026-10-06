@@ -30,7 +30,7 @@ function harness(
   });
   const llm = createLlmClient({
     db,
-    keys: { gemini: "g", openrouter: "o", openai: "k" },
+    keys: { gemini: "g", openrouter: "o", openai: "k", jev: "j" },
     fetch: fetchMock as unknown as typeof fetch,
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -270,7 +270,7 @@ describe("chat", () => {
     const calls: string[] = [];
     const llm = createLlmClient({
       db,
-      keys: { gemini: "g", openrouter: "o", openai: "k" },
+      keys: { gemini: "g", openrouter: "o", openai: "k", jev: "j" },
       fetch: (async (url: string) => {
         calls.push(url);
         return json({}, 400);
@@ -466,5 +466,64 @@ describe("embedding pacing", () => {
     const h = harness([() => json(minuteBody, 429), () => embedOk(25), () => embedOk(25)], { embedQuota: quota, random: 0 });
     await h.llm.embed({ inputs: batch(25) }); // 429, waits 55s, retries OK
     expect(h.sleeps[0]).toBe(55_000);
+  });
+});
+
+describe("classify (jev)", () => {
+  const questions = {
+    relation: { type: "choice" as const, instructions: "Same story?", criteria: { same: "same event", related: "follow-up", different: "other" } },
+  };
+  const args = { state: "Article A ... Article B ...", questions, purpose: "adjudicate" };
+  const answer = { type: "choice", choice: "same", confidence: 0.9, probabilities: { same: 0.93, related: 0.05, different: 0.02 } };
+  const jevOk = (tokens = 1_000_000) =>
+    json({ model: "jev-1.13.0", answers: { relation: answer }, usage: { input_tokens: tokens, output_tokens: 20 } });
+
+  it("posts the typed questions to /systemone with the jev key and records the resolved model and cost", async () => {
+    const { llm, fetchMock } = harness([() => jevOk()]);
+    const res = await llm.classify(args);
+    expect(res).toMatchObject({ model: "jev-1.13.0", cached: false, answers: { relation: { choice: "same" } } });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.typesafe.ai/v1/systemone");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer j");
+    expect(JSON.parse(init.body as string)).toEqual({ state: args.state, model: "jev-latest", questions });
+    const [row] = await db.select().from(llmCalls);
+    expect(row).toMatchObject({ provider: "jev", model: "jev-1.13.0", ok: true, inputTokens: 1_000_000, outputTokens: 20 });
+    expect(row.costUsd).toBeCloseTo(0.042);
+  });
+
+  it("retries 529 overload, then succeeds", async () => {
+    const { llm, fetchMock } = harness([() => json({}, 529), () => jevOk()]);
+    await llm.classify(args);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a 422 and never falls back to another provider", async () => {
+    const { llm, fetchMock } = harness([() => json({ error: "bad schema" }, 422)]);
+    await expect(llm.classify(args)).rejects.toThrow(/422/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(llmCalls))[0]).toMatchObject({ provider: "jev", ok: false });
+  });
+
+  it("treats a missing or mismatched answer as a non-retryable error", async () => {
+    const { llm, fetchMock } = harness([() => json({ model: "jev-1.13.0", answers: { relation: { type: "noul", noul: 0.5 } } })]);
+    await expect(llm.classify(args)).rejects.toThrow(/no usable answer for: relation/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cache hit makes no call and writes no row", async () => {
+    const { llm, fetchMock } = harness([() => jevOk(100)]);
+    await llm.classify({ ...args, cacheKey: "pair1" });
+    const again = await llm.classify({ ...args, cacheKey: "pair1" });
+    expect(again).toMatchObject({ cached: true, model: "jev-1.13.0", answers: { relation: { choice: "same" } } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(llmCalls)).toHaveLength(1);
+  });
+
+  it("opens only jev's breaker after repeated failures", async () => {
+    const { llm } = harness(Array.from({ length: 12 }, () => () => json({}, 500)));
+    for (let i = 0; i < 3; i++) await expect(llm.classify(args)).rejects.toThrow();
+    expect(llm.isBreakerOpen("jev")).toBe(true);
+    expect(llm.isBreakerOpen("gemini")).toBe(false);
+    await expect(llm.classify(args)).rejects.toThrow(CircuitOpenError);
   });
 });

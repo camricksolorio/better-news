@@ -11,6 +11,8 @@ import {
   EMBED_MAX_INPUTS,
   FAILURE_POLICY,
   GEMINI_BASE_URL,
+  JEV_BASE_URL,
+  JEV_MODEL,
   OPENAI_BASE_URL,
   OPENROUTER_BASE_URL,
   defaultEmbedQuota,
@@ -18,7 +20,19 @@ import {
   type EmbedQuota,
 } from "./llm-config";
 
-export type Provider = "gemini" | "openrouter" | "openai";
+export type Provider = "gemini" | "openrouter" | "openai" | "jev";
+
+// A typed question for TypeSafe's System One endpoint. Answers carry calibrated probabilities (noul: P(yes);
+// choice and score: one probability per option).
+export type JevQuestion =
+  | { type: "noul"; instructions: string; criteria?: { true: string; false: string } }
+  | { type: "choice"; instructions: string; criteria: Record<string, string> }
+  | { type: "score"; instructions: string; criteria: string[] };
+
+export type JevAnswer =
+  | { type: "noul"; noul: number }
+  | { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number }
+  | { type: "score"; score: number; legend: Record<string, string>; probabilities: Record<string, number>; confidence: number };
 
 // What a 429 said about the quota that was hit (Google's QuotaFailure detail).
 export type QuotaInfo = { id: string; metric: string; scope: "minute" | "day" | "other" };
@@ -93,7 +107,7 @@ export type LlmClientOptions = {
   db: Db;
   // Epoch ms after which no new attempt starts. Typically maxDuration minus a 10s margin.
   deadline?: number;
-  keys?: { gemini?: string; openrouter?: string; openai?: string };
+  keys?: { gemini?: string; openrouter?: string; openai?: string; jev?: string };
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -118,11 +132,12 @@ export function createLlmClient(options: LlmClientOptions) {
     gemini: options.keys?.gemini ?? process.env.GOOGLE_GEMINI_API_KEY,
     openrouter: options.keys?.openrouter ?? process.env.OPEN_ROUTER_API_KEY,
     openai: options.keys?.openai ?? process.env.OPENAI_API_KEY,
+    jev: options.keys?.jev ?? process.env.JEV_API_KEY,
   };
   const deadline = options.deadline ?? Number.POSITIVE_INFINITY;
   const policy = FAILURE_POLICY;
 
-  const consecutiveFailures: Record<Provider, number> = { gemini: 0, openrouter: 0, openai: 0 };
+  const consecutiveFailures: Record<Provider, number> = { gemini: 0, openrouter: 0, openai: 0, jev: 0 };
   // Models whose per-day quota is spent this run: later calls fail fast without a request.
   const dailyExhausted = new Set<string>();
   const embedQuota = options.embedQuota === undefined ? defaultEmbedQuota() : options.embedQuota;
@@ -165,7 +180,7 @@ export function createLlmClient(options: LlmClientOptions) {
   }
 
   const baseUrl = (p: Provider) =>
-    p === "gemini" ? GEMINI_BASE_URL : p === "openai" ? OPENAI_BASE_URL : OPENROUTER_BASE_URL;
+    p === "gemini" ? GEMINI_BASE_URL : p === "openai" ? OPENAI_BASE_URL : p === "jev" ? JEV_BASE_URL : OPENROUTER_BASE_URL;
 
   function breakerOpen(provider: Provider) {
     return consecutiveFailures[provider] >= policy.breakerThreshold;
@@ -480,7 +495,70 @@ export function createLlmClient(options: LlmClientOptions) {
     throw lastError!;
   }
 
-  return { chat, embed, isBreakerOpen: breakerOpen };
+  // Typed questions to jev (TypeSafe System One). jev is an adjudicator candidate only: no fallback to another
+  // provider, because thresholds are calibrated per model (D34, D35).
+  async function classify(args: {
+    state: string;
+    questions: Record<string, JevQuestion>;
+    model?: string;
+    purpose: string;
+    context?: CallContext;
+    cacheKey?: string;
+  }): Promise<{ answers: Record<string, JevAnswer>; model: string; cached: boolean }> {
+    if (args.cacheKey) {
+      const cached = await lookupCache(args.cacheKey);
+      if (cached !== undefined) return { ...(cached as { answers: Record<string, JevAnswer>; model: string }), cached: true };
+    }
+    const requested = args.model ?? JEV_MODEL;
+    const started = now();
+    try {
+      const { value, usage } = await withRetries<{ answers: Record<string, JevAnswer>; model: string }>("jev", requested, async () => {
+        const raw = (await request(
+          "jev",
+          "/systemone",
+          { state: args.state, model: requested, questions: args.questions },
+          policy.chatTimeoutMs,
+        )) as { model?: string; answers?: Record<string, JevAnswer>; usage?: { input_tokens?: number; output_tokens?: number } };
+        const answers = raw.answers;
+        const missing = Object.keys(args.questions).filter((id) => answers?.[id]?.type !== args.questions[id].type);
+        if (!answers || missing.length) {
+          throw new LlmError(`jev returned no usable answer for: ${missing.join(", ") || "all questions"}`, "jev", false);
+        }
+        return {
+          value: { answers, model: raw.model ?? requested },
+          usage: {
+            inputTokens: raw.usage?.input_tokens ?? Math.ceil(args.state.length / 4),
+            outputTokens: raw.usage?.output_tokens ?? 0,
+            providerCostUsd: null,
+          },
+        };
+      });
+      await record({
+        purpose: args.purpose,
+        provider: "jev",
+        model: value.model,
+        usage,
+        latencyMs: now() - started,
+        context: args.context,
+        cacheKey: args.cacheKey,
+        response: args.cacheKey ? value : undefined,
+      });
+      return { ...value, cached: false };
+    } catch (e) {
+      await record({
+        purpose: args.purpose,
+        provider: "jev",
+        model: requested,
+        latencyMs: now() - started,
+        error: (e as Error).message,
+        context: args.context,
+        quotaId: (e as LlmError).quota?.id,
+      }).catch(() => {});
+      throw e;
+    }
+  }
+
+  return { chat, classify, embed, isBreakerOpen: breakerOpen };
 }
 
 export type LlmClient = ReturnType<typeof createLlmClient>;
