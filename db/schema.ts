@@ -165,6 +165,30 @@ export const evalPairLabels = pgTable(
   ],
 );
 
+// The join audit (D37): a random sample of joins from a replay, each one an article and the story member it was
+// judged against. Labels go to eval_pair_labels like any human label; this table only says which pairs to review.
+export const joinAuditItems = pgTable(
+  "join_audit_items",
+  {
+    auditId: text("audit_id").notNull(),
+    articleId: uuid("article_id")
+      .notNull()
+      .references(() => feedItems.id),
+    memberId: uuid("member_id")
+      .notNull()
+      .references(() => feedItems.id),
+    // Random display order, so a reviewer who stops early has still seen a random subset.
+    position: integer("position").notNull(),
+    // The classifier's verdicts for this join. Not shown to the reviewer.
+    verdict: jsonb("verdict"),
+    sampledAt: timestamp("sampled_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.auditId, table.articleId, table.memberId] }),
+    check("join_audit_items_distinct_check", sql`${table.articleId} <> ${table.memberId}`),
+  ],
+);
+
 // Single-flight lease per endpoint (D22).
 export const pipelineLocks = pgTable("pipeline_locks", {
   name: text("name").primaryKey(),

@@ -22,6 +22,7 @@
     "eval:semeval": "tsx --tsconfig tsconfig.json scripts/semeval-fetch.ts",
     "eval:wcep": "tsx --tsconfig tsconfig.json scripts/wcep-convert.ts",
     "eval:compare": "tsx --env-file=.env --tsconfig tsconfig.json scripts/compare-adjudicators.ts",
+    "eval:audit": "tsx --env-file=.env --tsconfig tsconfig.json scripts/audit-sample.ts",
     "eval:silver": "tsx --env-file=.env --tsconfig tsconfig.json scripts/silver-label.ts",
     "eval:knn": "tsx --tsconfig tsconfig.json scripts/spike-knn.ts",
     "eval:prefix": "tsx --env-file=.env --tsconfig tsconfig.json scripts/spike-prefix.ts"

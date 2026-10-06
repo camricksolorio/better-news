@@ -20,6 +20,7 @@ export function connectTestDb() {
 }
 
 const TABLES = [
+  "join_audit_items",
   "eval_pair_labels",
   "llm_calls",
   "pipeline_runs",

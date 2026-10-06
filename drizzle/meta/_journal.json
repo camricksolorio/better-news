@@ -43,6 +43,13 @@
       "when": 1791209507863,
       "tag": "0005_llm_usage_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791256349078,
+      "tag": "0006_join_audit_items",
+      "breakpoints": true
     }
   ]
 }

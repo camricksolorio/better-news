@@ -20,6 +20,9 @@ export default async function AdminHome() {
         <li>
           <a href="/admin/label" className="underline">Label pairs</a>: judge same / related / different (the eval ground truth)
         </li>
+        <li>
+          <a href="/admin/audit" className="underline">Join audit</a>: review a random sample of joins (works on a phone)
+        </li>
         <li>Stories, costs, and pipeline health will be linked here.</li>
       </ul>
     </main>

@@ -47,6 +47,8 @@ export type ReplayResult = {
   clusterOf: Map<string, string>;
   // Articles left unclustered because a classifier call failed.
   failed: string[];
+  // Every article the classifier joined to a story, with the members it was judged against (D34).
+  joins: { articleId: string; storyId: string; memberIds: string[]; verdict: unknown }[];
 };
 
 export async function replay(
@@ -114,5 +116,13 @@ export async function replay(
     grayShare: sorted.length === 0 ? 0 : grayIds.size / sorted.length,
     clusterOf,
     failed,
+    joins: store.assignments
+      .filter((x) => x.info.method === "llm")
+      .map((x) => ({
+        articleId: x.articleId,
+        storyId: x.storyId,
+        memberIds: ((x.info.llmVerdict ?? []) as { memberId: string }[]).map((v) => v.memberId),
+        verdict: x.info.llmVerdict,
+      })),
   };
 }
