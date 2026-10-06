@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { summarize, type AuditArticle, type AuditItem } from "@/lib/audit";
+import { summarize } from "@/lib/audit-summary";
+import type { AuditArticle, AuditItem } from "@/lib/audit";
 import type { Label } from "@/lib/labeling";
 import { clearAuditLabelAction, saveAuditLabelAction } from "./actions";
 
