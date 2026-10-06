@@ -139,9 +139,9 @@ Design: TDD D31–D37 (2026-10-05). Embeddings only find a candidate story; a cl
 
 **Assignment**
 
-- [ ] `lib/pipeline/assign.ts`: remove the `tHigh` auto-join; `tLow` 0.84 and `windowHours` 12 as defaults; adjudicate the best candidate against its first article and its most similar member (one call when they are the same article); join only if both are `same` with `p_same ≥ τ`; otherwise a new story; a call that fails after retries leaves the article unclustered; log both verdicts in `story_assignments`
-  - [ ] Tests: nothing joins without the classifier; one call when the first article is also the most similar member; a single `related` verdict blocks the join; `p_same` below τ starts a new story; a failure leaves the article unclustered; thin articles go through the same path; a 12h window blocks a join at 13h
-- [ ] Replay harness: `--adjudicator` and `--tau` flags, classifier share and calls, cost per 100 articles, thin-article precision, and an exact 95% lower bound on precision
+- [x] `lib/pipeline/assign.ts`: remove the `tHigh` auto-join; `tLow` 0.84 and `windowHours` 12 as defaults; adjudicate the best candidate against its first article and its most similar member (one call when they are the same article); join only if both are `same` with `p_same ≥ τ`; otherwise a new story; a call that fails after retries leaves the article unclustered; log both verdicts in `story_assignments`
+  - [x] Tests (`assign.test.ts`, `cluster.test.ts`): nothing joins without the classifier; one call when the first article is also the most similar member; a single `related` verdict blocks the join; `p_same` below τ starts a new story; a failure leaves the article unclustered; thin articles go through the same path; a 12h window blocks a join at 13h
+- [~] Replay harness: `tHigh` and the explorer's T_high slider removed and `--t-low` / `--window-hours` defaults follow the new config; `scripts/spike-promo.ts` (a finished `tHigh` spike) deleted. Left: `--adjudicator` and `--tau` flags, classifier share and calls, cost per 100 articles, thin-article precision, and an exact 95% lower bound on precision
 - [ ] K control in the explorer and harness (kNN slot dominance, TDD risk); compare K = 10 with 30–50 on recall
 
 **Tuning and audit**

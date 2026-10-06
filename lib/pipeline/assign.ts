@@ -4,17 +4,16 @@ import { createHash } from "node:crypto";
 import { EMBEDDING_MODEL } from "@/lib/llm-config";
 
 export type ClusterConfig = {
+  // Retrieval floor (D32): a candidate scoring below this starts a new story. Nothing joins on embeddings alone.
   tLow: number;
-  tHigh: number;
   windowHours: number;
   k: number;
   model: string;
 };
 
 export const DEFAULT_CLUSTER_CONFIG: ClusterConfig = {
-  tLow: 0.75,
-  tHigh: 0.88,
-  windowHours: 36,
+  tLow: 0.84,
+  windowHours: 12,
   k: 10,
   model: EMBEDDING_MODEL,
 };
@@ -49,8 +48,13 @@ export type Candidate = {
   // Max cosine similarity to any member (from the kNN), and to the centroid.
   topScore: number;
   centroidScore: number;
+  // The two members the classifier compares the article with (D34): the story's earliest article and
+  // its member most similar to the article. Often the same article.
+  firstArticleId: string;
+  topMemberId: string;
 };
 
+// "embedding" is no longer produced (D32); the database constraint and old rows still carry it.
 export type Method = "embedding" | "llm" | "new_story";
 
 export type AssignmentInfo = {
@@ -71,10 +75,11 @@ export interface StoryStore {
   recordAssignment(article: ArticleInput, storyId: string, info: AssignmentInfo): Promise<void>;
 }
 
-export type Adjudicator = (
-  article: ArticleInput,
-  candidate: Candidate,
-) => Promise<{ same: boolean; verdict?: unknown; llmCallId?: string | null }>;
+export type PairVerdict = { same: boolean; verdict?: unknown; llmCallId?: string | null };
+
+// Judges the article against one member of the candidate story. It resolves the member's text itself, so the core
+// stays text-free. Throwing means the call failed after retries: the article is then left unclustered (D34).
+export type Adjudicator = (article: ArticleInput, memberId: string, candidate: Candidate) => Promise<PairVerdict>;
 
 const HOUR = 3_600_000;
 
@@ -132,7 +137,8 @@ export function nextStoryState(story: StoryState, article: ArticleInput, windowH
 
 export type Outcome = { storyId: string; method: Method; created: boolean };
 
-// One article through the flow in the TDD: candidates, band, optional adjudication.
+// One article through the flow in the TDD: candidates, retrieval floor, then the classifier decides the join.
+// Without an adjudicator (the embedding-only baseline) nothing joins.
 export async function assignArticle(
   store: StoryStore,
   article: ArticleInput,
@@ -150,21 +156,22 @@ export async function assignArticle(
     await store.recordAssignment(article, storyId, { method: "new_story", ...scores, ...extra });
     return { storyId, method: "new_story", created: true };
   };
-  const join = async (method: Method, extra: Partial<AssignmentInfo> = {}): Promise<Outcome> => {
+
+  if (!best || candidateScore(best) < cfg.tLow || !adjudicate) return startNew();
+
+  // Both members must be judged the same story (D34). A thrown error propagates before any write.
+  const memberIds = [...new Set([best.firstArticleId, best.topMemberId])];
+  const verdicts: (PairVerdict & { memberId: string })[] = [];
+  for (const memberId of memberIds) {
+    const v = await adjudicate(article, memberId, best);
+    verdicts.push({ memberId, ...v });
+    if (!v.same) break;
+  }
+  const info = { llmVerdict: verdicts.map(({ memberId, same, verdict }) => ({ memberId, same, verdict })), llmCallId: verdicts[0].llmCallId };
+  if (verdicts.length === memberIds.length && verdicts.every((v) => v.same)) {
     await store.addToStory(best.story, article, cfg);
-    await store.recordAssignment(article, best.story.id, { method, ...scores, ...extra });
-    return { storyId: best.story.id, method, created: false };
-  };
-
-  if (!best) return startNew();
-  const score = candidateScore(best);
-  if (score < cfg.tLow) return startNew();
-  // Thin articles never auto-join on embedding alone (D9).
-  if (score >= cfg.tHigh && !article.thin) return join("embedding");
-
-  // Gray zone. Without an adjudicator (the embedding-only baseline) stay conservative.
-  if (!adjudicate) return startNew();
-  const verdict = await adjudicate(article, best);
-  if (verdict.same) return join("llm", { llmVerdict: verdict.verdict, llmCallId: verdict.llmCallId });
-  return startNew({ llmVerdict: verdict.verdict, llmCallId: verdict.llmCallId });
+    await store.recordAssignment(article, best.story.id, { method: "llm", ...scores, ...info });
+    return { storyId: best.story.id, method: "llm", created: false };
+  }
+  return startNew(info);
 }

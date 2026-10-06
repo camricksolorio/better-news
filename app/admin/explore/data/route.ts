@@ -13,7 +13,6 @@ export async function GET(request: NextRequest) {
   const q = request.nextUrl.searchParams;
   const params: Partial<ExploreParams> = {
     tLow: num(q.get("tLow")),
-    tHigh: num(q.get("tHigh")),
     windowHours: num(q.get("windowHours")),
     gray: q.get("gray") === "join" ? "join" : "new",
   };

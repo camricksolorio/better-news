@@ -73,11 +73,11 @@ describe("replay", () => {
       { a: "a", b: "c", label: "different" },
       { a: "a", b: "d", label: "related" },
     ];
-    const r = await replay(snapshot, labels, DEFAULT_CLUSTER_CONFIG);
+    const r = await replay(snapshot, labels, { ...DEFAULT_CLUSTER_CONFIG, tLow: 0.9 }, { gray: "join" });
     expect(r.articles).toBe(4);
     expect(r.clusterOf.get("a")).toBe(r.clusterOf.get("b"));
     expect(r.clusterOf.get("c")).not.toBe(r.clusterOf.get("a"));
-    // d is 30 degrees off a/b: cos = 0.866, inside the gray band, treated as a new story at baseline.
+    // Only b reaches the classifier (an optimistic one here): d is 30 degrees off, cos 0.866, below the 0.9 floor.
     expect(r.grayCount).toBe(1);
     expect(r.grayShare).toBeCloseTo(0.25);
     expect(r.metrics.precision).toBe(1);
@@ -87,8 +87,8 @@ describe("replay", () => {
 
   it("is deterministic regardless of input order", async () => {
     const snapshot = [snap("a", 0, 0), snap("b", 1, 2), snap("c", 2, 90)];
-    const one = await replay(snapshot, [], DEFAULT_CLUSTER_CONFIG);
-    const two = await replay([...snapshot].reverse(), [], DEFAULT_CLUSTER_CONFIG);
+    const one = await replay(snapshot, [], DEFAULT_CLUSTER_CONFIG, { gray: "join" });
+    const two = await replay([...snapshot].reverse(), [], DEFAULT_CLUSTER_CONFIG, { gray: "join" });
     expect(two.stories).toBe(one.stories);
   });
 });
@@ -132,8 +132,8 @@ describe("sim cache", () => {
 
   it("replay with the cache gives the same clusters as without", async () => {
     const snap = make(200);
-    const plain = await replay(snap, [], { ...DEFAULT_CLUSTER_CONFIG, tHigh: 0.2, tLow: 0.1 });
-    const cached = await replay(snap, [], { ...DEFAULT_CLUSTER_CONFIG, tHigh: 0.2, tLow: 0.1 }, { memberSim: buildSimCache(snap).memberSim });
+    const plain = await replay(snap, [], { ...DEFAULT_CLUSTER_CONFIG, tLow: 0.1 }, { gray: "join" });
+    const cached = await replay(snap, [], { ...DEFAULT_CLUSTER_CONFIG, tLow: 0.1 }, { gray: "join", memberSim: buildSimCache(snap).memberSim });
     const groups = (m: Map<string, string>) => {
       const g = new Map<string, string[]>();
       for (const [k, v] of m) g.set(v, [...(g.get(v) ?? []), k]);

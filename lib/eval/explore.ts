@@ -9,7 +9,6 @@ import { MAX_CACHED_WINDOW_HOURS, buildSimCache, type SimCache } from "./sim-cac
 
 export type ExploreParams = {
   tLow: number;
-  tHigh: number;
   windowHours: number;
   gray: "new" | "join";
 };
@@ -98,10 +97,9 @@ const results = new Map<string, Promise<ExploreResult>>();
 
 export function clampParams(p: Partial<ExploreParams>): ExploreParams {
   const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
-  const tHigh = Math.min(1, Math.max(0, num(p.tHigh, DEFAULT_CLUSTER_CONFIG.tHigh)));
-  const tLow = Math.min(tHigh, Math.max(0, num(p.tLow, DEFAULT_CLUSTER_CONFIG.tLow)));
+  const tLow = Math.min(1, Math.max(0, num(p.tLow, DEFAULT_CLUSTER_CONFIG.tLow)));
   const windowHours = Math.min(MAX_CACHED_WINDOW_HOURS, Math.max(1, num(p.windowHours, DEFAULT_CLUSTER_CONFIG.windowHours)));
-  return { tLow, tHigh, windowHours, gray: p.gray === "join" ? "join" : "new" };
+  return { tLow, windowHours, gray: p.gray === "join" ? "join" : "new" };
 }
 
 export function runExplore(raw: Partial<ExploreParams>): Promise<ExploreResult> {

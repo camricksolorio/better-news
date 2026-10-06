@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { asc, eq, sql } from "drizzle-orm";
 import { feedItems, stories, storyAssignments } from "@/db/schema";
 import { connectTestDb, resetTestDb } from "@/tests/test-db";
-import { DEFAULT_CLUSTER_CONFIG, assignArticle } from "./assign";
+import { DEFAULT_CLUSTER_CONFIG, assignArticle, type Adjudicator } from "./assign";
 import { runClusterStage } from "./cluster";
 import { createDbStore } from "./store-db";
 import type { Db } from "@/db/types";
@@ -15,6 +15,9 @@ beforeEach(() => resetTestDb(client));
 const H = 3_600_000;
 const T0 = Date.UTC(2026, 9, 1, 12, 0);
 const far = () => Date.now() + 60_000;
+const yes: Adjudicator = async () => ({ same: true });
+// These tests were written for a 36h window and a 0.75 floor; the classifier always agrees.
+const cfg36 = { ...DEFAULT_CLUSTER_CONFIG, tLow: 0.75, windowHours: 36 };
 const at = (deg: number) => {
   const v = new Array(768).fill(0);
   v[0] = Math.cos((deg * Math.PI) / 180);
@@ -50,7 +53,7 @@ describe("runClusterStage", () => {
     const a = await embedded(0, 0);
     const b = await embedded(1, 0, { sourceId: "other" });
     const c = await embedded(2, 90);
-    const result = await runClusterStage(db, { deadline: far() });
+    const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect(result).toMatchObject({ processed: 3, remaining: 0, failed: 0 });
     const [ra, rb, rc] = await Promise.all([get(a.id), get(b.id), get(c.id)]);
     expect(ra.storyId).toBe(rb.storyId);
@@ -59,14 +62,14 @@ describe("runClusterStage", () => {
     const s = await story(ra.storyId!);
     expect(s).toMatchObject({ articleCount: 2, sourceCount: 2 });
     const log = await db.select().from(storyAssignments).orderBy(asc(storyAssignments.createdAt));
-    expect(log.map((l) => l.method).sort()).toEqual(["embedding", "new_story", "new_story"]);
+    expect(log.map((l) => l.method).sort()).toEqual(["llm", "new_story", "new_story"]);
     expect(log[0].pipelineVersion).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it("ignores rows embedded with a different model, and does not use them as candidates", async () => {
     const other = await embedded(0, 0, { embeddingModel: "old-model" });
     const mine = await embedded(1, 0);
-    const result = await runClusterStage(db, { deadline: far() });
+    const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect(result).toMatchObject({ processed: 1, remaining: 0 });
     expect((await get(other.id)).clusteredAt).toBeNull();
     expect((await get(mine.id)).clusteredAt).not.toBeNull();
@@ -85,18 +88,31 @@ describe("runClusterStage", () => {
     expect(setting).toBe("relaxed_order");
   });
 
+  it("candidates name the story's earliest article and the member most similar to the article (D34)", async () => {
+    const first = await embedded(0, 0);
+    const second = await embedded(1, 20);
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
+    const [cand] = await db.transaction(async (tx) =>
+      createDbStore(tx as unknown as Db, "test").candidates(
+        { id: "x", sourceId: "s", time: new Date(T0 + 2 * H), embedding: at(22), thin: false },
+        cfg36,
+      ),
+    );
+    expect(cand).toMatchObject({ firstArticleId: first.id, topMemberId: second.id });
+  });
+
   it("skips ingested rows that have no embedding yet", async () => {
     await embedded(0, 0, { embedding: null, embeddingModel: null, embeddingInputVersion: null });
-    const result = await runClusterStage(db, { deadline: far() });
+    const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect(result).toMatchObject({ processed: 0, remaining: 0 });
   });
 
   it("a late article that fits a closed story joins it, and the story stays closed", async () => {
     await embedded(0, 0);
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     await db.execute(sql`UPDATE stories SET status = 'closed'`);
     const late = await embedded(30, 0);
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     const row = await get(late.id);
     const s = await story(row.storyId!);
     expect(s).toMatchObject({ status: "closed", articleCount: 2 });
@@ -105,10 +121,10 @@ describe("runClusterStage", () => {
   it("an earlier-than-anchor article moves the anchor back only when every member still fits", async () => {
     const a = await embedded(0, 0);
     await embedded(20, 0);
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     const early = await embedded(-10, 0);
     const tooEarly = await embedded(-20, 0);
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     const s = await story((await get(a.id)).storyId!);
     expect(new Date(s.firstArticleAt).getTime()).toBe(T0 - 10 * H);
     expect(new Date(s.windowEndsAt).getTime()).toBe(T0 - 10 * H + 36 * H);
@@ -118,15 +134,15 @@ describe("runClusterStage", () => {
 
   it("an article embedded late (out of order) still joins the right story", async () => {
     const newer = await embedded(10, 0);
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     const older = await embedded(8, 3);
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect((await get(older.id)).storyId).toBe((await get(newer.id)).storyId);
   });
 
   it("uses created_at when a feed gave no published date", async () => {
     const row = await embedded(0, 0, { publishedAt: null });
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     const s = await story((await get(row.id)).storyId!);
     expect(Math.abs(new Date(s.firstArticleAt).getTime() - Date.now())).toBeLessThan(60_000);
   });
@@ -135,7 +151,7 @@ describe("runClusterStage", () => {
     await embedded(0, 0); // window ended in 2026-10-02: past relative to now
     const future = new Date(Date.now() + 10 * H);
     await embedded(0, 90, { publishedAt: future });
-    const result = await runClusterStage(db, { deadline: far() });
+    const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect(result.closed).toBe(1);
     const all = await db.select().from(stories);
     expect(all.map((s) => s.status).sort()).toEqual(["closed", "open"]);
@@ -144,25 +160,25 @@ describe("runClusterStage", () => {
   it("backfill mode defers the close sweep until nothing remains", async () => {
     await embedded(0, 0);
     await embedded(1, 90);
-    const partial = await runClusterStage(db, { deadline: far(), deferCloseSweep: true, limit: 1 });
+    const partial = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes, deferCloseSweep: true, limit: 1 });
     expect(partial).toMatchObject({ processed: 1, remaining: 1, closed: 0 });
-    const done = await runClusterStage(db, { deadline: far(), deferCloseSweep: true });
+    const done = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes, deferCloseSweep: true });
     expect(done).toMatchObject({ remaining: 0, closed: 2 });
   });
 
   it("stops when the lease is lost, and resuming gives the same result as one run", async () => {
     for (let i = 0; i < 4; i++) await embedded(i, 0);
-    const first = await runClusterStage(db, { deadline: far(), afterArticle: async () => false });
+    const first = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes, afterArticle: async () => false });
     expect(first).toMatchObject({ processed: 1, remaining: 3 });
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect(await db.select().from(stories)).toHaveLength(1);
     expect((await db.select().from(stories))[0].articleCount).toBe(4);
   });
 
   it("re-running is a no-op", async () => {
     await embedded(0, 0);
-    await runClusterStage(db, { deadline: far() });
-    const again = await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
+    const again = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect(again).toMatchObject({ processed: 0, remaining: 0 });
     expect(await db.select().from(storyAssignments)).toHaveLength(1);
   });
@@ -188,7 +204,7 @@ describe("runClusterStage", () => {
     ];
     const rows = [];
     for (const [h, deg, src] of plan) rows.push(await embedded(h, deg, { sourceId: src }));
-    await runClusterStage(db, { deadline: far() });
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
 
     const mem = createMemoryStore();
     const sorted = [...rows].sort(
@@ -198,7 +214,8 @@ describe("runClusterStage", () => {
       await assignArticle(
         mem,
         { id: r.id, sourceId: r.sourceId, time: new Date(r.publishedAt!), embedding: r.embedding!, thin: false },
-        DEFAULT_CLUSTER_CONFIG,
+        cfg36,
+        yes,
       );
     }
     const dbGroups = new Map<string, string[]>();

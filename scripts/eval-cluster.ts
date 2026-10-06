@@ -1,6 +1,6 @@
 // Replays a snapshot through the clustering core and scores it against labels.
 // Usage: pnpm eval:cluster --snapshot eval/snapshot-*.jsonl --labels eval/labels-*.jsonl
-//          [--t-high 0.88] [--t-low 0.75] [--window-hours 36]
+//          [--t-low 0.84] [--window-hours 12]
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { DEFAULT_CLUSTER_CONFIG } from "@/lib/pipeline/assign";
@@ -14,7 +14,6 @@ async function main() {
     options: {
       snapshot: { type: "string" },
       labels: { type: "string", multiple: true },
-      "t-high": { type: "string" },
       "t-low": { type: "string" },
       "window-hours": { type: "string" },
       worst: { type: "string" },
@@ -37,7 +36,6 @@ async function main() {
 
   const cfg = {
     ...DEFAULT_CLUSTER_CONFIG,
-    tHigh: values["t-high"] ? Number(values["t-high"]) : DEFAULT_CLUSTER_CONFIG.tHigh,
     tLow: values["t-low"] ? Number(values["t-low"]) : DEFAULT_CLUSTER_CONFIG.tLow,
     windowHours: values["window-hours"] ? Number(values["window-hours"]) : DEFAULT_CLUSTER_CONFIG.windowHours,
   };
@@ -45,11 +43,11 @@ async function main() {
   const { metrics: m } = r;
   const title = new Map(snapshot.map((a) => [a.guid, a.title]));
 
-  console.log(`config: T_high=${cfg.tHigh} T_low=${cfg.tLow} window=${cfg.windowHours}h`);
+  console.log(`config: T_low=${cfg.tLow} window=${cfg.windowHours}h`);
   console.log(`articles=${r.articles} stories=${r.stories} labeled pairs=${byPair.size}`);
   console.log(`precision=${pct(m.precision)} recall=${pct(m.recall)} F1=${pct(m.f1)} related-leak=${pct(m.relatedLeak)}`);
   console.log(`counts: ${JSON.stringify(m.counts)} missing=${m.unlabeledMissing}`);
-  console.log(`LLM band: ${r.grayCount} articles (${pct(r.grayShare)}); baseline treats them as new stories`);
+  console.log(`Reached the classifier: ${r.grayCount} articles (${pct(r.grayShare)}); this baseline has no classifier, so nothing joins`);
   const worst = Number(values.worst ?? 5);
   console.log("\nworst false merges:");
   for (const e of m.falseMerges.slice(0, worst)) console.log(`  [${e.label}] ${title.get(e.a)}  <>  ${title.get(e.b)}`);

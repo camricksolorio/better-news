@@ -3,14 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ArticleView, ExploreSummary, StoryView, ViewPayload } from "@/lib/eval/explore";
 
-type Response = { params: { tLow: number; tHigh: number; windowHours: number }; summary: ExploreSummary; payload: ViewPayload; ms: number };
+type Response = { params: { tLow: number; windowHours: number }; summary: ExploreSummary; payload: ViewPayload; ms: number };
 
 const PAGE_SIZE = 20;
 const fmtTime = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 export function Explorer() {
-  const [tLow, setTLow] = useState(0.75);
-  const [tHigh, setTHigh] = useState(0.88);
+  const [tLow, setTLow] = useState(0.84);
   const [windowHours, setWindowHours] = useState(36);
   const [gray, setGray] = useState<"new" | "join">("new");
   const [view, setView] = useState<"stories" | "gray" | "search">("stories");
@@ -31,7 +30,7 @@ export function Explorer() {
     const timer = setTimeout(async () => {
       setLoading(true);
       const params = new URLSearchParams({
-        tLow: String(tLow), tHigh: String(tHigh), windowHours: String(windowHours), gray,
+        tLow: String(tLow), windowHours: String(windowHours), gray,
         view, sort, minSize: String(minSize), q, page: String(page),
       });
       try {
@@ -48,10 +47,9 @@ export function Explorer() {
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [tLow, tHigh, windowHours, gray, view, sort, minSize, q, page]);
+  }, [tLow, windowHours, gray, view, sort, minSize, q, page]);
 
-  const setHigh = (v: number) => { setTHigh(v); if (tLow > v) setTLow(v); resetPage(); };
-  const setLow = (v: number) => { setTLow(v); if (tHigh < v) setTHigh(v); resetPage(); };
+  const setLow = (v: number) => { setTLow(v); resetPage(); };
   const total = data?.payload.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -63,11 +61,10 @@ export function Explorer() {
       </div>
 
       <section className="mb-6 grid gap-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800 sm:grid-cols-2">
-        <Slider label="T_high (auto-join at or above)" value={tHigh} min={0.5} max={1} step={0.005} onChange={setHigh} />
         <Slider label="T_low (new story below)" value={tLow} min={0.5} max={1} step={0.005} onChange={setLow} />
         <Slider label="Window (hours)" value={windowHours} min={6} max={48} step={1} onChange={(v) => { setWindowHours(v); resetPage(); }} digits={0} />
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-zinc-500">Gray zone (between T_low and T_high)</span>
+          <span className="text-zinc-500">Classifier verdict (articles at or above T_low)</span>
           <select value={gray} onChange={(e) => { setGray(e.target.value as "new" | "join"); resetPage(); }} className="rounded border border-zinc-300 bg-transparent px-2 py-1 dark:border-zinc-700">
             <option value="new">Start a new story (conservative: LLM says no)</option>
             <option value="join">Join best candidate (optimistic: LLM says yes)</option>
@@ -77,7 +74,7 @@ export function Explorer() {
 
       {error && <p className="mb-4 rounded bg-red-100 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-200">{error}</p>}
 
-      {data && <Summary s={data.summary} tLow={data.params.tLow} tHigh={data.params.tHigh} ms={data.ms} loading={loading} />}
+      {data && <Summary s={data.summary} tLow={data.params.tLow} ms={data.ms} loading={loading} />}
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         {(["stories", "gray", "search"] as const).map((v) => (
@@ -148,7 +145,7 @@ function Slider({ label, value, min, max, step, onChange, digits = 3 }: { label:
   );
 }
 
-function Summary({ s, tLow, tHigh, ms, loading }: { s: ExploreSummary; tLow: number; tHigh: number; ms: number; loading: boolean }) {
+function Summary({ s, tLow, ms, loading }: { s: ExploreSummary; tLow: number; ms: number; loading: boolean }) {
   const max = Math.max(1, ...s.histogram.map((b) => b.count));
   const stats: [string, string][] = [
     ["Articles", s.articles.toLocaleString()],
@@ -167,12 +164,12 @@ function Summary({ s, tLow, tHigh, ms, loading }: { s: ExploreSummary; tLow: num
       <div className="relative flex h-24 items-end gap-px">
         {s.histogram.map((b) => {
           const mid = b.from + 0.01;
-          const zone = mid >= tHigh ? "bg-emerald-500" : mid >= tLow ? "bg-amber-500" : "bg-zinc-400";
+          const zone = mid >= tLow ? "bg-amber-500" : "bg-zinc-400";
           return <div key={b.from} title={`${b.from.toFixed(2)}–${(b.from + 0.02).toFixed(2)}: ${b.count}`} className={`flex-1 ${zone}`} style={{ height: `${(b.count / max) * 100}%`, minHeight: b.count ? 2 : 0 }} />;
         })}
       </div>
       <div className="flex justify-between text-xs text-zinc-500"><span>0.50</span><span>0.75</span><span>1.00</span></div>
-      <p className="mt-2 text-xs text-zinc-500"><span className="text-emerald-600">green</span> joins · <span className="text-amber-600">amber</span> LLM band · <span className="text-zinc-500">grey</span> new story · {loading ? "updating…" : `${ms} ms`} · {s.snapshot}</p>
+      <p className="mt-2 text-xs text-zinc-500"><span className="text-amber-600">amber</span> goes to the classifier · <span className="text-zinc-500">grey</span> new story · {loading ? "updating…" : `${ms} ms`} · {s.snapshot}</p>
     </section>
   );
 }

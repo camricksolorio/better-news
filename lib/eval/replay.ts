@@ -18,7 +18,7 @@ export type Decision = {
   method: "embedding" | "llm" | "new_story";
   topScore: number | null;
   centroidScore: number | null;
-  // The best candidate was in the gray band (or the article was thin): the LLM's call in production.
+  // The article reached the classifier: its best candidate cleared T_low.
   gray: boolean;
   // For gray articles: the story the LLM would have been asked about, and how it scored.
   candidateStoryId?: string;
@@ -54,7 +54,6 @@ export async function replay(
   const sorted = [...snapshot].sort(
     (x, y) => new Date(x.time).getTime() - new Date(y.time).getTime() || x.guid.localeCompare(y.guid),
   );
-  let grayCount = 0;
   const clusterOf = new Map<string, string>();
 
   for (const a of sorted) {
@@ -66,8 +65,7 @@ export async function replay(
       thin: a.thin,
     };
     // Baseline: the gray zone is counted and treated conservatively (new story) until Phase 3.
-    const outcome = await assignArticle(store, input, cfg, async (_article, candidate) => {
-      grayCount++;
+    const outcome = await assignArticle(store, input, cfg, async (_article, _memberId, candidate) => {
       grayIds.set(a.guid, candidate.story.id);
       return { same: options.gray === "join" };
     });
@@ -92,8 +90,8 @@ export async function replay(
     metrics: computeMetrics(clusterOf, labels),
     articles: sorted.length,
     stories: store.stories.size,
-    grayCount,
-    grayShare: sorted.length === 0 ? 0 : grayCount / sorted.length,
+    grayCount: grayIds.size,
+    grayShare: sorted.length === 0 ? 0 : grayIds.size / sorted.length,
     clusterOf,
   };
 }

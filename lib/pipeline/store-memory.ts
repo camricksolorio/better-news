@@ -35,7 +35,7 @@ export function createMemoryStore(
 
     async candidates(article: ArticleInput, cfg: ClusterConfig): Promise<Candidate[]> {
       // Keep only the k most similar members (a small sorted list) instead of sorting them all.
-      const top: { storyId: string; sim: number }[] = [];
+      const top: { storyId: string; memberId: string; sim: number }[] = [];
       for (const [storyId, story] of stories) {
         if (!fitsWindow(story, article.time, cfg.windowHours)) continue;
         for (const m of members.get(storyId) ?? []) {
@@ -43,17 +43,24 @@ export function createMemoryStore(
           if (top.length === cfg.k && sim <= top[top.length - 1].sim) continue;
           let i = top.length;
           while (i > 0 && top[i - 1].sim < sim) i--;
-          top.splice(i, 0, { storyId, sim });
+          top.splice(i, 0, { storyId, memberId: m.id, sim });
           if (top.length > cfg.k) top.pop();
         }
       }
-      const topByStory = new Map<string, number>();
-      for (const n of top) {
-        topByStory.set(n.storyId, Math.max(topByStory.get(n.storyId) ?? -1, n.sim));
-      }
-      return [...topByStory].map(([storyId, topScore]) => {
+      // `top` is sorted by similarity, so the first entry per story is its best member.
+      const bestByStory = new Map<string, { memberId: string; sim: number }>();
+      for (const n of top) if (!bestByStory.has(n.storyId)) bestByStory.set(n.storyId, n);
+      return [...bestByStory].map(([storyId, best]) => {
         const story = stories.get(storyId)!;
-        return { story, topScore, centroidScore: cosine(article.embedding, story.centroid) };
+        // The earliest member, ties by id, matching the database store.
+        const first = [...members.get(storyId)!].sort((a, b) => a.time.getTime() - b.time.getTime() || a.id.localeCompare(b.id))[0];
+        return {
+          story,
+          topScore: best.sim,
+          centroidScore: cosine(article.embedding, story.centroid),
+          firstArticleId: first.id,
+          topMemberId: best.memberId,
+        };
       });
     },
 
