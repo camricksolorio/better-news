@@ -25,11 +25,13 @@ export type AdjudicatorConfig = {
   tau: number;
 };
 
-// Starting value until the comparison picks a model and τ (D34).
+// Working choice after the 2026-10-06 comparison: jev's probabilities discriminate (precision 100% at τ >= 0.93 on
+// the human reference pairs, from only 4 joins); the chat models' self-reported p_same saturates. τ is provisional
+// until the replay and the join audit (D37). Changing the model or prompt version means redoing the comparison.
 export const DEFAULT_ADJUDICATOR: AdjudicatorConfig = {
-  model: "gpt-4o-mini",
+  model: "jev-latest",
   promptVersion: ADJUDICATION_PROMPT_VERSION,
-  tau: 0.9,
+  tau: 0.93,
 };
 
 export type AdjudicationArticle = { id: string; title: string; source: string; time: Date | string; snippet: string };
