@@ -153,6 +153,8 @@ Each check in `checks` is `{ name, ok, detail }`. The health checks, with starti
 - **Backlog:** the oldest unclustered article is under 12h old.
 - **Stuck rows:** no rows have `embed_attempts` at or above 5.
 
+"Successful" means a finished run with no error. Ages are measured from ingest time (`created_at`), not publish time, so a backfill of old articles does not trip the backlog check; rows already counted as stuck are left out of the backlog check. A database that cannot answer is reported as a failing `database` check with `503`.
+
 Admin pages and actions are Next.js server actions behind `ADMIN_SECRET` (see part 6), not part of this public contract.
 
 #### 2. Normalize and embed
