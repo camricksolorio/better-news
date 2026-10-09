@@ -1,8 +1,9 @@
 // The /api/cluster stage (D27): assigns embedded, unclustered articles to stories using
 // stored vectors only. It never calls the embedding API.
-import { and, asc, count, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { feedItems, stories } from "@/db/schema";
+import { CircuitOpenError, DeadlineError, QuotaExhaustedError } from "@/lib/llm";
 import { isThin } from "@/lib/text";
 import {
   DEFAULT_CLUSTER_CONFIG,
@@ -12,6 +13,8 @@ import {
   type ClusterConfig,
 } from "./assign";
 import { createDbStore, parseVector } from "./store-db";
+
+export const MAX_CLUSTER_ATTEMPTS = 5;
 
 export type ClusterOptions = {
   deadline: number;
@@ -36,6 +39,8 @@ function pending(model: string, opts: Pick<ClusterOptions, "source" | "from" | "
     isNotNull(feedItems.embedding),
     isNull(feedItems.clusteredAt),
     eq(feedItems.embeddingModel, model),
+    lt(feedItems.clusterAttempts, MAX_CLUSTER_ATTEMPTS),
+    or(isNull(feedItems.clusterNextAttemptAt), lte(feedItems.clusterNextAttemptAt, sql`now()`)),
     opts.source ? eq(feedItems.sourceId, opts.source) : undefined,
     opts.from ? sql`${effective} >= ${opts.from.toISOString()}::timestamptz` : undefined,
     opts.to ? sql`${effective} <= ${opts.to.toISOString()}::timestamptz` : undefined,
@@ -45,6 +50,19 @@ function pending(model: string, opts: Pick<ClusterOptions, "source" | "from" | "
 export async function countPending(db: Db, model: string, opts: Pick<ClusterOptions, "source" | "from" | "to"> = {}) {
   const [row] = await db.select({ n: count() }).from(feedItems).where(pending(model, opts));
   return row.n;
+}
+
+// An article whose assignment failed after retries: count the attempt and back off (1h * 2^attempts, max 12h),
+// as the embed stage does, so a poison article is not retried on every call.
+async function recordFailure(db: Db, id: string, error: string) {
+  await db
+    .update(feedItems)
+    .set({
+      clusterAttempts: sql`${feedItems.clusterAttempts} + 1`,
+      clusterError: error.slice(0, 500),
+      clusterNextAttemptAt: sql`now() + least(interval '1 hour' * power(2, ${feedItems.clusterAttempts}), interval '12 hours')`,
+    })
+    .where(eq(feedItems.id, id));
 }
 
 // Open stories whose window has passed become closed (D18). Closed stories stay candidates.
@@ -100,10 +118,14 @@ export async function runClusterStage(db: Db, opts: ClusterOptions): Promise<Clu
         );
       });
       processed++;
-    } catch {
-      // A bad row must not block the rest; skip it for this run (it stays pending).
+    } catch (e) {
+      // Breaker open, daily quota spent, or out of time: not this article's fault. Leave it untouched and stop.
+      if (e instanceof CircuitOpenError || e instanceof DeadlineError || e instanceof QuotaExhaustedError) break;
+      // A bad row must not block the rest. It backs off (and is excluded from the next selection); if even that
+      // write fails, skip it for this run so the loop cannot spin on it.
       skipped.add(row.id);
       failed++;
+      await recordFailure(db, row.id, e instanceof Error ? e.message : String(e)).catch(() => {});
     }
 
     if (opts.afterArticle && !(await opts.afterArticle())) break;

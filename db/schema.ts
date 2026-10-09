@@ -65,6 +65,10 @@ export const feedItems = pgTable(
     // Cluster stage
     storyId: uuid("story_id").references(() => stories.id),
     clusteredAt: timestamp("clustered_at", { withTimezone: true }),
+    // Same retry tracking as the embed stage: a failed article backs off, and after 5 attempts leaves the queue.
+    clusterAttempts: integer("cluster_attempts").notNull().default(0),
+    clusterError: text("cluster_error"),
+    clusterNextAttemptAt: timestamp("cluster_next_attempt_at", { withTimezone: true }),
   },
   (table) => [
     uniqueIndex("feed_items_guid_idx").on(table.guid),

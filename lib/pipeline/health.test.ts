@@ -12,7 +12,7 @@ const ago = (h: number) => sql`now() - ${h} * interval '1 hour'`;
 let n = 0;
 const vec = () => new Array(768).fill(0).map((_, i) => (i === 0 ? 1 : 0));
 // Clustered rows need a story and an embedding (database check); unclustered ones need neither.
-async function article(o: { ingestedHoursAgo?: number; clustered?: boolean; attempts?: number } = {}) {
+async function article(o: { ingestedHoursAgo?: number; clustered?: boolean; attempts?: number; clusterAttempts?: number } = {}) {
   const clustered = o.clustered !== false;
   let storyId: string | undefined;
   if (clustered) {
@@ -26,6 +26,7 @@ async function article(o: { ingestedHoursAgo?: number; clustered?: boolean; atte
       title: "t",
       link: `https://x.test/${n}`,
       embedAttempts: o.attempts ?? 0,
+      clusterAttempts: o.clusterAttempts ?? 0,
       createdAt: ago(o.ingestedHoursAgo ?? 1) as unknown as Date,
       ...(clustered ? { storyId, embedding: vec(), embeddingModel: "gemini-embedding-2", embeddingInputVersion: "v1", clusteredAt: ago(0.5) as unknown as Date } : {}),
     })
@@ -102,5 +103,13 @@ describe("runHealthChecks", () => {
     const h = await runHealthChecks(db);
     expect(h.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["stuck_rows"]);
     expect((await check("stuck_rows")).detail).toContain("1 rows");
+  });
+
+  it("rows out of cluster attempts also fail stuck rows alone, and are not counted as backlog", async () => {
+    await healthy();
+    await article({ ingestedHoursAgo: 20, clustered: false, clusterAttempts: 5 });
+    const h = await runHealthChecks(db);
+    expect(h.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["stuck_rows"]);
+    expect((await check("stuck_rows")).detail).toBe("0 rows out of embed attempts, 1 out of cluster attempts");
   });
 });

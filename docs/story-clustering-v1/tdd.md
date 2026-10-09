@@ -128,7 +128,7 @@ Platform versions: Next.js 16.3.6 (App Router) with React 19.2.8, Tailwind v4, T
 
 - **Endpoints:** `/api/embed` and `/api/cluster`, each authenticated like `/api/ingest` (`Authorization: Bearer $CRON_SECRET`). They share `lib/pipeline/*` and hand off through `feed_items` (D27).
 - **Row states, derived from columns:** *ingested* (`embedding IS NULL`), *embedded* (`embedding IS NOT NULL AND clustered_at IS NULL`), *clustered* (`clustered_at IS NOT NULL`). There is no separate status column.
-- **Work selection:** `/api/embed` takes ingested rows whose `embed_next_attempt_at` is null or in the past, oldest `published_at` first. `/api/cluster` takes embedded rows whose `embedding_model` equals the configured model, oldest `published_at` first. Neither waits for the other (D28).
+- **Work selection:** `/api/embed` takes ingested rows whose `embed_next_attempt_at` is null or in the past, oldest `published_at` first. `/api/cluster` takes embedded rows whose `embedding_model` equals the configured model, with `cluster_attempts` below 5 and `cluster_next_attempt_at` null or in the past, oldest `published_at` first. Neither waits for the other (D28).
 - **Contract:** each call caps its work to stay under the function time limit and returns `{ processed, remaining, failed, durationMs }` (see Endpoint contracts below). Selected rows are processed in `published_at` ascending order.
 - **Scoping parameters (optional, D20), accepted by both endpoints:** `source=<feed id>` limits work to one source; `from` and `to` (ISO dates) limit it to a `published_at` range; `mode=backfill` lowers concurrency to respect free-tier limits and, for `/api/cluster`, defers the close sweep until `remaining = 0`. With none set, the endpoint runs the scheduled live behavior. Parameter rules: a date-only `to` covers that whole day (so `to=2026-08-08` includes the 8th); `from` after `to`, an unparseable date, an empty `source`, a `mode` other than `backfill`, and any unknown parameter are `400`. Both functions declare `maxDuration = 60` (matching `/api/ingest`), so the run deadline is 50s; the lease is 90s and extended after every batch or article.
 - **Workflow:** the GitHub Actions workflow (`.github/workflows/`, cron `0 */6 * * *`) runs ingest, then `/api/embed`, then `/api/cluster`, each endpoint in a loop until `remaining = 0` (capped at 50 iterations). A `409 busy` ends a loop with a notice instead of failing. Any other non-2xx response fails the job, but the cluster step still runs if the embed step failed (`if: always()`), so already-embedded articles keep flowing. After clustering, a final step calls `/api/health`, and a `503` fails the job so GitHub's failure notification fires (D25). It keeps `curl -sfL`, which follows redirects.
@@ -151,7 +151,7 @@ Each check in `checks` is `{ name, ok, detail }`. The health checks, with starti
 - **Embed freshness:** the last successful `/api/embed` run (from `pipeline_runs`) is under 12h old.
 - **Cluster freshness:** the last successful `/api/cluster` run is under 12h old.
 - **Backlog:** the oldest unclustered article is under 12h old.
-- **Stuck rows:** no rows have `embed_attempts` at or above 5.
+- **Stuck rows:** no rows have `embed_attempts` or `cluster_attempts` at or above 5.
 
 "Successful" means a finished run with no error. Ages are measured from ingest time (`created_at`), not publish time, so a backfill of old articles does not trip the backlog check; rows already counted as stuck are left out of the backlog check. A database that cannot answer is reported as a failing `database` check with `503`.
 
@@ -201,7 +201,7 @@ flowchart TD
   J --> U["Update centroid and counts"]
 ```
 
-**Stage contract (`/api/cluster`, D27):** reads stored vectors only and never calls the embedding API; the classifier is called only to decide joins. Because it does not wait for embedding (D28), an older article that embeds late is clustered after newer ones and joins through the window-fit rule.
+**Stage contract (`/api/cluster`, D27):** reads stored vectors only and never calls the embedding API; the classifier is called only to decide joins. An article whose assignment fails after retries gets `cluster_attempts + 1`, `cluster_error`, and `cluster_next_attempt_at = now() + min(1h × 2^attempts, 12h)`, the same backoff as embedding, so a poison article is not retried on every call and the workflow loop on `remaining` terminates; after 5 attempts it leaves the queue and the stuck-rows health check reports it. An open breaker, a spent daily quota, or the deadline is not the article's fault: the run stops and the article is left untouched. A successful assignment clears the error and the next-attempt time. Because it does not wait for embedding (D28), an older article that embeds late is clustered after newer ones and joins through the window-fit rule.
 
 Articles are processed in `published_at` order.
 
@@ -266,6 +266,9 @@ feed_items  (+ columns)
   embed_next_attempt_at timestamptz
   story_id         uuid → stories.id (nullable)
   clustered_at     timestamptz
+  cluster_attempts int not null default 0
+  cluster_error    text
+  cluster_next_attempt_at timestamptz
   canonical_link   text
   HNSW index on embedding (vector_cosine_ops)
 

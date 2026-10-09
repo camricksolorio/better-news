@@ -2,6 +2,7 @@
 // Ages come from the database clock so they agree with the timestamps the stages wrote.
 import { sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
+import { MAX_CLUSTER_ATTEMPTS } from "./cluster";
 import { MAX_EMBED_ATTEMPTS } from "./embed";
 
 export const MAX_AGE_HOURS = 12;
@@ -14,7 +15,8 @@ type Row = {
   embed_age: string | null;
   cluster_age: string | null;
   backlog_age: string | null;
-  stuck: number;
+  stuck_embed: number;
+  stuck_cluster: number;
 };
 
 const hours = (seconds: string | null) => (seconds === null ? null : Number(seconds) / 3600);
@@ -32,8 +34,9 @@ export async function runHealthChecks(db: Db): Promise<Health> {
       (SELECT extract(epoch FROM now() - max(finished_at)) FROM pipeline_runs WHERE stage = 'embed' AND finished_at IS NOT NULL AND error IS NULL) AS embed_age,
       (SELECT extract(epoch FROM now() - max(finished_at)) FROM pipeline_runs WHERE stage = 'cluster' AND finished_at IS NOT NULL AND error IS NULL) AS cluster_age,
       -- Stuck rows are reported by their own check, so they are left out here.
-      (SELECT extract(epoch FROM now() - min(created_at)) FROM feed_items WHERE clustered_at IS NULL AND embed_attempts < ${MAX_EMBED_ATTEMPTS}) AS backlog_age,
-      (SELECT count(*)::int FROM feed_items WHERE embed_attempts >= ${MAX_EMBED_ATTEMPTS}) AS stuck
+      (SELECT extract(epoch FROM now() - min(created_at)) FROM feed_items WHERE clustered_at IS NULL AND embed_attempts < ${MAX_EMBED_ATTEMPTS} AND cluster_attempts < ${MAX_CLUSTER_ATTEMPTS}) AS backlog_age,
+      (SELECT count(*)::int FROM feed_items WHERE embed_attempts >= ${MAX_EMBED_ATTEMPTS}) AS stuck_embed,
+      (SELECT count(*)::int FROM feed_items WHERE cluster_attempts >= ${MAX_CLUSTER_ATTEMPTS}) AS stuck_cluster
   `)) as unknown as Row[];
 
   const backlog = hours(row.backlog_age);
@@ -44,7 +47,14 @@ export async function runHealthChecks(db: Db): Promise<Health> {
     backlog === null
       ? { name: "backlog", ok: true, detail: "no unclustered articles" }
       : { name: "backlog", ok: backlog < MAX_AGE_HOURS, detail: `oldest unclustered article ingested ${fmt(backlog)} ago (limit ${MAX_AGE_HOURS}h)` },
-    { name: "stuck_rows", ok: row.stuck === 0, detail: row.stuck === 0 ? "none" : `${row.stuck} rows at ${MAX_EMBED_ATTEMPTS} failed embed attempts` },
+    {
+      name: "stuck_rows",
+      ok: row.stuck_embed === 0 && row.stuck_cluster === 0,
+      detail:
+        row.stuck_embed + row.stuck_cluster === 0
+          ? "none"
+          : `${row.stuck_embed} rows out of embed attempts, ${row.stuck_cluster} out of cluster attempts`,
+    },
   ];
   return { ok: checks.every((c) => c.ok), checks };
 }
