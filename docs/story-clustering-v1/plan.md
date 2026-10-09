@@ -169,13 +169,13 @@ Design: TDD D31–D37 (2026-10-05). Embeddings only find a candidate story; a cl
 
 **Admin tooling**
 
-- [ ] Stories inspector, "doesn't belong" action (records a label and a `manual` assignment), cost panel
-- [ ] Pipeline health panel: per-stage last run (time, status, processed, failed), row counts by state (ingested, embedded, clustered), age of the oldest unprocessed article, stuck-row count, open-story count, 429 and fallback counts
-  - [ ] Tests: the "doesn't belong" action writes both the label and the `manual` assignment
+- [x] Stories inspector, "doesn't belong" action (records a label and a `manual` assignment), cost panel. `/admin/stories` (newest first, multi-article by default, status filter, paging), `/admin/stories/[id]` (members in time order with method, scores, and who each join was judged against, with the classifier's relation, `p_same`, and model), `/admin/costs` (14 days by Pacific day × purpose × model, days over the $0.50 budget flagged). "Doesn't belong" (`lib/admin-stories.ts`, one transaction) writes a human `related` or `different` label against the members the classifier judged the article against (or the earliest other member if it did not join through the classifier), moves the article to a new story of its own, logs a `manual` assignment, and recomputes the old story (count, sources, anchor, window, centroid). Not built: undoing a move; the inspector shows a classifier reason only when the model gave one (jev gives none)
+- [x] Pipeline health panel (`/admin/pipeline`): per-stage last run (time, status, processed, failed), row counts by state (ingested, embedded, clustered), age of the oldest unprocessed article, stuck-row count, open-story count, 429 and fallback counts
+  - [x] Tests: `lib/admin-stories.test.ts` (the action writes the label and the `manual` assignment and moves the article; recomputes the old story when the first article leaves; falls back to the earliest other member; replaces an existing human label; a moved article is not re-clustered; bad requests write nothing) and `lib/admin-pipeline.test.ts` (costs by day, stage runs, counts by state, 429 and fallback counts). Also driven in the browser against a seeded local database: the action, the list, and both panels
 
 **Verification**
 
-- [ ] Verify a stall is caught: with thresholds temporarily lowered, confirm `/api/health` returns `503` and the workflow step fails
+- [x] Verify a stall is caught: run against a local dev server and a seeded local database (not production). Healthy: `/api/health` `200` and `scripts/ci/health.sh` exit 0. With the cluster stage's last run aged to 13h: `503` naming `cluster_freshness`, and `health.sh` exit 1 (the non-zero exit is what fails the workflow step); no secret: `401`. Aging the data stood in for lowering the thresholds, so no threshold code was touched. The workflow step itself has not run in Actions
 - [ ] Exit: 3 days unattended, no failed runs, within budget
 
 ## Not in this plan
