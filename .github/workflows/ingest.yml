@@ -6,14 +6,30 @@ on:
     - cron: "0 */6 * * *"
   workflow_dispatch: {}
 
+# After ingest, embed and cluster loop until nothing remains (scripts/ci/run-stage.sh), then /api/health
+# fails the job if the pipeline is stale or stuck, so GitHub's failure notification fires.
+# Later steps use `if: always()` so one failing stage does not stop the others: already-embedded
+# articles still get clustered when embedding is down.
 jobs:
   ingest:
     runs-on: ubuntu-latest
+    env:
+      APP_URL: ${{ secrets.APP_URL }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci
       - name: Call ingest endpoint
         run: |
           curl -sfL -X GET "${APP_URL}/api/ingest" \
             -H "Authorization: Bearer ${CRON_SECRET}"
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      - name: Embed new articles
+        if: always()
+        run: scripts/ci/run-stage.sh embed
+      - name: Cluster embedded articles
+        if: always()
+        run: scripts/ci/run-stage.sh cluster
+      - name: Check pipeline health
+        if: always()
+        run: scripts/ci/health.sh

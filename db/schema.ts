@@ -38,7 +38,7 @@ export const stories = pgTable(
     check("stories_span_check", sql`${table.firstArticleAt} <= ${table.lastArticleAt}`),
     check("stories_window_check", sql`${table.windowEndsAt} >= ${table.lastArticleAt}`),
   ],
-);
+).enableRLS();
 
 export const feedItems = pgTable(
   "feed_items",
@@ -65,6 +65,10 @@ export const feedItems = pgTable(
     // Cluster stage
     storyId: uuid("story_id").references(() => stories.id),
     clusteredAt: timestamp("clustered_at", { withTimezone: true }),
+    // Same retry tracking as the embed stage: a failed article backs off, and after 5 attempts leaves the queue.
+    clusterAttempts: integer("cluster_attempts").notNull().default(0),
+    clusterError: text("cluster_error"),
+    clusterNextAttemptAt: timestamp("cluster_next_attempt_at", { withTimezone: true }),
   },
   (table) => [
     uniqueIndex("feed_items_guid_idx").on(table.guid),
@@ -82,7 +86,7 @@ export const feedItems = pgTable(
       sql`${table.embedding} IS NULL OR (${table.embeddingModel} IS NOT NULL AND ${table.embeddingInputVersion} IS NOT NULL)`,
     ),
   ],
-);
+).enableRLS();
 
 export const llmCalls = pgTable(
   "llm_calls",
@@ -109,7 +113,7 @@ export const llmCalls = pgTable(
     quotaId: text("quota_id"),
   },
   (table) => [index("llm_calls_cache_key_idx").on(table.cacheKey)],
-);
+).enableRLS();
 
 // Append-only decision log (D10, D24); a trigger rejects UPDATE and DELETE.
 export const storyAssignments = pgTable(
@@ -138,7 +142,7 @@ export const storyAssignments = pgTable(
       sql`${table.method} IN ('embedding', 'llm', 'new_story', 'manual')`,
     ),
   ],
-);
+).enableRLS();
 
 // Human and silver labels; durable, exported to the repo (D26).
 export const evalPairLabels = pgTable(
@@ -163,7 +167,7 @@ export const evalPairLabels = pgTable(
     ),
     check("eval_pair_labels_order_check", sql`${table.articleA} < ${table.articleB}`),
   ],
-);
+).enableRLS();
 
 // The join audit (D37): a random sample of joins from a replay, each one an article and the story member it was
 // judged against. Labels go to eval_pair_labels like any human label; this table only says which pairs to review.
@@ -187,14 +191,14 @@ export const joinAuditItems = pgTable(
     primaryKey({ columns: [table.auditId, table.articleId, table.memberId] }),
     check("join_audit_items_distinct_check", sql`${table.articleId} <> ${table.memberId}`),
   ],
-);
+).enableRLS();
 
 // Single-flight lease per endpoint (D22).
 export const pipelineLocks = pgTable("pipeline_locks", {
   name: text("name").primaryKey(),
   owner: text("owner").notNull(),
   lockedUntil: timestamp("locked_until", { withTimezone: true }).notNull(),
-});
+}).enableRLS();
 
 export const pipelineRuns = pgTable(
   "pipeline_runs",
@@ -212,7 +216,7 @@ export const pipelineRuns = pgTable(
     index("pipeline_runs_stage_started_idx").on(table.stage, table.startedAt),
     check("pipeline_runs_stage_check", sql`${table.stage} IN ('embed', 'cluster')`),
   ],
-);
+).enableRLS();
 
 export type FeedItem = typeof feedItems.$inferSelect;
 export type NewFeedItem = typeof feedItems.$inferInsert;

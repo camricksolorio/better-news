@@ -50,6 +50,20 @@
       "when": 1791256349078,
       "tag": "0006_join_audit_items",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791331348543,
+      "tag": "0007_enable_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791508925057,
+      "tag": "0008_cluster_attempts",
+      "breakpoints": true
     }
   ]
 }

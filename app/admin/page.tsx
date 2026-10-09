@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireAdmin } from "@/lib/admin-auth";
 import { logout } from "./actions";
 
@@ -23,7 +24,15 @@ export default async function AdminHome() {
         <li>
           <a href="/admin/audit" className="underline">Join audit</a>: review a random sample of joins (works on a phone)
         </li>
-        <li>Stories, costs, and pipeline health will be linked here.</li>
+        <li>
+          <Link href="/admin/stories" className="underline">Stories</Link>: inspect what was grouped and why, and flag articles that don&apos;t belong
+        </li>
+        <li>
+          <a href="/admin/pipeline" className="underline">Pipeline health</a>: stage runs, backlog, stuck articles, rate limits
+        </li>
+        <li>
+          <a href="/admin/costs" className="underline">Costs</a>: model spend by day, purpose, and model
+        </li>
       </ul>
     </main>
   );

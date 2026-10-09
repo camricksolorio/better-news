@@ -3,7 +3,8 @@ import { asc, eq, sql } from "drizzle-orm";
 import { feedItems, stories, storyAssignments } from "@/db/schema";
 import { connectTestDb, resetTestDb } from "@/tests/test-db";
 import { DEFAULT_CLUSTER_CONFIG, assignArticle, type Adjudicator } from "./assign";
-import { runClusterStage } from "./cluster";
+import { CircuitOpenError, QuotaExhaustedError } from "@/lib/llm";
+import { MAX_CLUSTER_ATTEMPTS, runClusterStage } from "./cluster";
 import { createDbStore } from "./store-db";
 import type { Db } from "@/db/types";
 import { createMemoryStore } from "./store-memory";
@@ -181,6 +182,86 @@ describe("runClusterStage", () => {
     const again = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
     expect(again).toMatchObject({ processed: 0, remaining: 0 });
     expect(await db.select().from(storyAssignments)).toHaveLength(1);
+  });
+
+  describe("failed articles (attempt tracking, like the embed stage)", () => {
+    const boom: Adjudicator = async () => {
+      throw new Error("classifier 503");
+    };
+    // `first` reaches no candidate and becomes a story; `second` reaches the classifier.
+    async function pair() {
+      const first = await embedded(0, 0);
+      const second = await embedded(1, 0, { sourceId: "other" });
+      return { first, second };
+    }
+
+    it("counts the attempt, records the error, backs off 1h, and does not block other articles", async () => {
+      const { first, second } = await pair();
+      const other = await embedded(2, 90);
+      const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: boom });
+      expect(result).toMatchObject({ processed: 2, failed: 1, remaining: 0 });
+      const row = await get(second.id);
+      expect(row).toMatchObject({ clusterAttempts: 1, clusterError: "classifier 503", clusteredAt: null });
+      const [{ hours }] = (await db.execute(sql`SELECT extract(epoch FROM cluster_next_attempt_at - now()) / 3600 AS hours FROM feed_items WHERE id = ${second.id}`)) as unknown as { hours: number }[];
+      expect(Number(hours)).toBeGreaterThan(0.9);
+      expect(Number(hours)).toBeLessThanOrEqual(1);
+      expect((await get(first.id)).clusteredAt).not.toBeNull();
+      expect((await get(other.id)).clusteredAt).not.toBeNull();
+    });
+
+    it("is not retried on the next call while backing off, so a loop on `remaining` terminates", async () => {
+      await pair();
+      await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: boom });
+      const again = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: boom });
+      expect(again).toMatchObject({ processed: 0, failed: 0, remaining: 0 });
+    });
+
+    it("is retried once the backoff has passed, and a success clears the error", async () => {
+      const { second } = await pair();
+      await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: boom });
+      await db.execute(sql`UPDATE feed_items SET cluster_next_attempt_at = now() - interval '1 second'`);
+      const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
+      expect(result).toMatchObject({ processed: 1, failed: 0, remaining: 0 });
+      expect(await get(second.id)).toMatchObject({ clusterError: null, clusterNextAttemptAt: null, clusterAttempts: 1 });
+      expect((await get(second.id)).clusteredAt).not.toBeNull();
+    });
+
+    it("backs off 2h on the second failure and caps at 12h", async () => {
+      const { second } = await pair();
+      const hoursAhead = async () =>
+        Number(((await db.execute(sql`SELECT extract(epoch FROM cluster_next_attempt_at - now()) / 3600 AS h FROM feed_items WHERE id = ${second.id}`)) as unknown as { h: number }[])[0].h);
+      await db.execute(sql`UPDATE feed_items SET cluster_attempts = 1 WHERE id = ${second.id}`);
+      await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: boom });
+      expect(await hoursAhead()).toBeGreaterThan(1.9);
+      await db.execute(sql`UPDATE feed_items SET cluster_attempts = 4, cluster_next_attempt_at = NULL WHERE id = ${second.id}`);
+      await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: boom });
+      expect(await hoursAhead()).toBeGreaterThan(11.9);
+      expect(await hoursAhead()).toBeLessThanOrEqual(12);
+    });
+
+    it(`leaves the queue after ${MAX_CLUSTER_ATTEMPTS} attempts`, async () => {
+      const { second } = await pair();
+      await db.execute(sql`UPDATE feed_items SET cluster_attempts = ${MAX_CLUSTER_ATTEMPTS} WHERE id = ${second.id}`);
+      const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
+      expect(result).toMatchObject({ processed: 1, remaining: 0 });
+      expect((await get(second.id)).clusteredAt).toBeNull();
+    });
+
+    it.each([
+      ["an open breaker", new CircuitOpenError("jev")],
+      ["a spent quota", new QuotaExhaustedError("daily quota", "gemini")],
+    ])("%s stops the run without penalizing the article", async (_, error) => {
+      const { second } = await pair();
+      const result = await runClusterStage(db, {
+        deadline: far(),
+        config: cfg36,
+        adjudicate: async () => {
+          throw error;
+        },
+      });
+      expect(result).toMatchObject({ processed: 1, failed: 0, remaining: 1 });
+      expect(await get(second.id)).toMatchObject({ clusterAttempts: 0, clusterError: null, clusterNextAttemptAt: null });
+    });
   });
 
   it("limits work by source and date range", async () => {

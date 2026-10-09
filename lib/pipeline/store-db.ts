@@ -114,7 +114,7 @@ export function createDbStore(db: Db, pipelineVersion: string): StoryStore {
     async recordAssignment(article: ArticleInput, storyId: string, info: AssignmentInfo): Promise<void> {
       await db
         .update(feedItems)
-        .set({ storyId, clusteredAt: sql`now()` })
+        .set({ storyId, clusteredAt: sql`now()`, clusterError: null, clusterNextAttemptAt: null })
         .where(eq(feedItems.id, article.id));
       await db.insert(storyAssignments).values({
         articleId: article.id,
