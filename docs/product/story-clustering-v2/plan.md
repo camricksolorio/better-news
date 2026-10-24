@@ -75,7 +75,7 @@ Design: TDD parts 1, 2 and the data model in part 9. Nothing here changes how ar
   - [x] Tests: a changed version is re-embedded and the old vector is kept until the new one lands; excluded rows are never selected
 - [x] v1 `/api/cluster` (still live until Phase 4): skip excluded rows in pending selection and in kNN candidates; set `placed_at` on first assignment; use `first_published_at` as the article time
   - [x] Tests: existing `cluster.test.ts` and `assign.test.ts` still pass; an excluded article is neither clustered nor a candidate
-- [ ] Deploy, then apply the migration to production after the export
+- [ ] Apply the migration to production (the export is done), **then** deploy: the new code needs the new columns, while the old code keeps working after the migration (the insert trigger fills `first_published_at`; old ingest just doesn't write versions for the minutes in between)
 - [ ] After one week: count `article_versions` created per day by source (version churn, a TDD unknown), and record it here
 
 ### Phase 2 — Evaluation first
