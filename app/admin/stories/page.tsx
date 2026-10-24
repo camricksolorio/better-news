@@ -22,7 +22,7 @@ export default async function StoriesPage({ searchParams }: { searchParams: Prom
   };
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8 text-zinc-800 dark:text-zinc-200">
+    <main className="mx-auto max-w-6xl px-4 py-8 text-zinc-800 dark:text-zinc-200">
       <div className="mb-1 flex items-baseline justify-between">
         <h1 className="text-xl font-semibold">Stories</h1>
         <a href="/admin" className="text-sm underline">Admin</a>
@@ -45,13 +45,24 @@ export default async function StoriesPage({ searchParams }: { searchParams: Prom
       {rows.length === 0 ? (
         <p className="text-zinc-500">No stories match.</p>
       ) : (
-        <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
+        <ul className="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))] sm:gap-6">
           {rows.map((s) => (
-            <li key={s.id} className="py-3">
-              <a href={`/admin/stories/${s.id}`} className="font-medium hover:underline">{s.headline || "(untitled)"}</a>
-              <div className="mt-0.5 text-xs text-zinc-500">
-                {s.articleCount} articles from {s.sourceCount} sources · {fmt(s.firstArticleAt)} to {fmt(s.lastArticleAt)} · {s.status}
-              </div>
+            <li key={s.id}>
+              <a
+                href={`/admin/stories/${s.id}`}
+                className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-4 transition hover:border-zinc-400 hover:shadow-md dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-600"
+              >
+                <span className="mb-4 line-clamp-3 text-lg font-semibold leading-snug text-zinc-950 dark:text-zinc-50">
+                  {s.headline || "(untitled)"}
+                </span>
+                <span className="mt-auto flex flex-col gap-0.5 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800">
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                    {s.articleCount} articles · {s.sourceCount} sources
+                  </span>
+                  <span>{fmt(s.firstArticleAt)} to {fmt(s.lastArticleAt)}</span>
+                  <span>{s.status}</span>
+                </span>
+              </a>
             </li>
           ))}
         </ul>

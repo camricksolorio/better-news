@@ -16,6 +16,10 @@ docs/
     plan.md                 # the ordered steps to implement it, including tests
 ```
 
+`docs/design/` is the exception: it is not a feature. It holds the standing
+design principles and system; see [design/AGENTS.md](design/AGENTS.md). Read
+it before building or changing any UI.
+
 Playbook mapping: `prd.md` plays the role of the playbook's `intent.md`,
 `tdd.md` the role of `spec.md`, and `plan.md` is unchanged.
 
