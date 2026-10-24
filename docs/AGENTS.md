@@ -88,4 +88,5 @@ All implementation status (what's built, in progress, done, or locked) lives in
 | Folder | Docs present | Status |
 | ------ | ------------ | ------ |
 | [`product/story-clustering-v1/`](product/story-clustering-v1/) | `tdd.md`, `plan.md` | Groups articles into stories. No `prd.md`; intent is at the top of the TDD. Superseded in part by v2 (fragmentation). |
+| [`product/story-clustering-v2/`](product/story-clustering-v2/) | `prd.md`, `tdd.md`, `plan.md` | Accepted PRD; TDD ready for review (windowed consolidation); plan written, not started. Fixes one event being split across several stories; blocks story-summary-v1. |
 | [`product/story-summary-v1/`](product/story-summary-v1/) | `tdd.md`, `plan.md` | AI summaries and story cards. Paused until clustering v2 lands. No `prd.md`. |
