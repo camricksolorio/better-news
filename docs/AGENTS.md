@@ -5,20 +5,30 @@ All development work in this repo follows a customized version of Anthropic's
 
 ## Layout
 
-One folder per feature or piece of dev work, named in kebab-case:
+Feature work lives under `docs/product/`, one folder per feature or piece of
+dev work, named in kebab-case. A new version of a feature gets its own folder
+(`story-clustering-v2/`), not edits to the old one.
 
 ```
 docs/
   AGENTS.md                 # this file
-  <feature-name>/
-    prd.md                  # what is wanted, why, and under which constraints
-    tdd.md                  # technical design doc: how we'll build it (implementation details, trade-offs)
-    plan.md                 # the ordered steps to implement it, including tests
+  product/
+    <feature-name>/
+      prd.md                # what is wanted, why, and under which constraints
+      tdd.md                # technical design doc: how we'll build it (implementation details, trade-offs)
+      plan.md               # the ordered steps to implement it, including tests
+  design/                   # standing design principles and system (not a feature)
+  research/                 # background research reports that inform features
 ```
 
-`docs/design/` is the exception: it is not a feature. It holds the standing
-design principles and system; see [design/AGENTS.md](design/AGENTS.md). Read
-it before building or changing any UI.
+`docs/design/` is not a feature. It holds the standing design principles and
+system; see [design/AGENTS.md](design/AGENTS.md). Read it before building or
+changing any UI.
+
+`docs/research/` holds standalone research reports (for example
+[story-clustering-sota.md](research/story-clustering-sota.md)). They are
+background, not requirements: a PRD or TDD links to the report it relies on
+rather than copying it.
 
 Playbook mapping: `prd.md` plays the role of the playbook's `intent.md`,
 `tdd.md` the role of `spec.md`, and `plan.md` is unchanged.
@@ -39,9 +49,10 @@ a `plan.md` (or no docs at all); a doc that isn't needed shouldn't be written.
 ## Rules for agents
 
 - Before starting work on a feature, read its folder's `prd.md`, `tdd.md`,
-  and `plan.md` (whichever exist) in that order to gain context.
+  and `plan.md` (whichever exist) in that order to gain context. When a
+  feature builds on an earlier version (v2 on v1), read the earlier folder too.
 - Don't start building from a feature that has no `plan.md` without asking.
-- Keep documents in the feature's folder; don't scatter planning docs in the
+- Keep documents in the feature's folder under `docs/product/`; don't scatter planning docs in the
   repo root.
 - Never rename the three filenames above; tooling and humans rely on them.
 
@@ -74,7 +85,7 @@ All implementation status (what's built, in progress, done, or locked) lives in
 
 ## Features
 
-| Folder                                   | Docs present | Status                                                                                                |
-| ---------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
-| [`story-clustering-v1/`](story-clustering-v1/) | `tdd.md`, `plan.md` | Design and plan confirmed; not yet built. Groups articles into stories. No `prd.md`; intent is at the top of the TDD. |
-| [`story-summary-v1/`](story-summary-v1/) | `tdd.md`, `plan.md` | Design and plan confirmed; not yet built. Follow-on to clustering; AI summaries and story cards. No `prd.md`. |
+| Folder | Docs present | Status |
+| ------ | ------------ | ------ |
+| [`product/story-clustering-v1/`](product/story-clustering-v1/) | `tdd.md`, `plan.md` | Groups articles into stories. No `prd.md`; intent is at the top of the TDD. Superseded in part by v2 (fragmentation). |
+| [`product/story-summary-v1/`](product/story-summary-v1/) | `tdd.md`, `plan.md` | AI summaries and story cards. Paused until clustering v2 lands. No `prd.md`. |

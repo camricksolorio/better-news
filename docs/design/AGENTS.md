@@ -1,7 +1,7 @@
 # docs/design — design principles and system
 
 The standing home for how Better News looks and behaves. Unlike the feature
-folders in `docs/`, nothing here is tied to one piece of work: it is
+folders in `docs/product/`, nothing here is tied to one piece of work: it is
 reference that every UI change is built against.
 
 ## Layout

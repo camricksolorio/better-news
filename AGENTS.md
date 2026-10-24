@@ -18,7 +18,7 @@ event (Ground News-style).
 
 ## Feature and dev work
 
-All feature/dev work is documented under `docs/<feature-name>/` as `prd.md`,
+All feature/dev work is documented under `docs/product/<feature-name>/` as `prd.md`,
 `tdd.md`, and `plan.md`. Read `docs/AGENTS.md` for the conventions before
 starting or planning any work.
 
