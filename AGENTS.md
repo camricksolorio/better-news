@@ -22,6 +22,11 @@ All feature/dev work is documented under `docs/<feature-name>/` as `prd.md`,
 `tdd.md`, and `plan.md`. Read `docs/AGENTS.md` for the conventions before
 starting or planning any work.
 
+## Design
+
+UI work follows the design principles in `docs/design/`. Read
+`docs/design/AGENTS.md` before building or changing any UI.
+
 ## Stack
 
 - **Next.js 16 (App Router)**, React 19, Tailwind v4 — `app/page.tsx` is the
