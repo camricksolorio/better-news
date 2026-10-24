@@ -131,7 +131,7 @@ Platform as in v1: Next.js 16.3.6, React 19.2.8, TypeScript 5, `drizzle-orm` 0.4
 
 The rules live in a table in the module, so a new source's pattern is a one-line addition. Ingest skips matching items before the upsert. If an existing row's link or title starts matching, ingest sets its `excluded_reason`. A one-off migration script marks existing matches `excluded_reason = 'live_blog'`. Excluded rows are never embedded, retrieved or clustered, and the repair (part 7) removes them from their stories.
 
-**Article versions.** Ingest computes `content_hash = sha256(normalizeTitle(title) + "\n" + cleanSummary(summary))` (using [lib/text.ts](../../../lib/text.ts)) for every item. The upsert (`onConflictDoUpdate` in [app/api/ingest/route.ts](../../../app/api/ingest/route.ts)) now also sets `content_hash`, but never `first_published_at`. Then, in the same request:
+**Article versions.** Ingest computes `content_hash = sha256(title + "\n" + summary)` over the title and summary exactly as stored (`lib/content-hash.ts`; a null summary hashes as empty) for every item. The hash is over the raw stored text, not the cleaned text from [lib/text.ts](../../../lib/text.ts), so the migration can backfill the same value in plain SQL. A change that only alters markup therefore makes a new version, which is harmless because versions are cheap and the verdict cache is keyed by version. The upsert (`onConflictDoUpdate` in [app/api/ingest/route.ts](../../../app/api/ingest/route.ts)) now also sets `content_hash`, but never `first_published_at`. Then, in the same request:
 
 ```sql
 INSERT INTO article_versions (article_id, title, summary, published_at, content_hash)
@@ -328,6 +328,8 @@ consolidation_runs
   stats jsonb  -- pairs retrieved/judged, merges, moves, new/retired stories, cost
   reverted_by uuid → consolidation_runs.id
 ```
+
+`first_published_at` is filled on insert by a `BEFORE INSERT` trigger (`published_at`, else `created_at`) when the insert leaves it out, and no code updates it afterwards. The "merged→open/closed only for revert runs" rule is implemented by the status trigger reading the transaction setting `better_news.revert = 'on'`, which revert runs set with `set_config(..., true)`; `closed→open` stays rejected even then.
 
 Constraint changes: `stories.status IN ('open','closed','merged')`; `merged_into IS NOT NULL` exactly when `status = 'merged'`; the status trigger allows `open→closed`, `open→merged`, `closed→merged` (repair), and `merged→open/closed` only for revert runs; `pair_verdicts` and `candidate_pairs` require `a < b`.
 

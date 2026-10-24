@@ -46,6 +46,7 @@ export function createDbStore(db: Db, pipelineVersion: string): StoryStore {
           FROM feed_items f
           JOIN stories s ON s.id = f.story_id
           WHERE f.clustered_at IS NOT NULL
+            AND f.excluded_reason IS NULL
             AND f.embedding_model = ${cfg.model}
             AND s.last_article_at - (${cfg.windowHours}::double precision * interval '1 hour') <= ${article.time.toISOString()}::timestamptz
             AND ${article.time.toISOString()}::timestamptz <= s.window_ends_at
@@ -57,7 +58,7 @@ export function createDbStore(db: Db, pipelineVersion: string): StoryStore {
                max(nn.sim) AS top_score,
                (array_agg(nn.id ORDER BY nn.sim DESC, nn.id))[1] AS top_member_id,
                (SELECT f2.id FROM feed_items f2 WHERE f2.story_id = s.id
-                ORDER BY coalesce(f2.published_at, f2.created_at), f2.id LIMIT 1) AS first_article_id,
+                ORDER BY f2.first_published_at, f2.id LIMIT 1) AS first_article_id,
                1 - (s.centroid <=> ${e}::vector) AS centroid_score
         FROM nn JOIN stories s ON s.id = nn.story_id
         GROUP BY s.id
@@ -114,7 +115,13 @@ export function createDbStore(db: Db, pipelineVersion: string): StoryStore {
     async recordAssignment(article: ArticleInput, storyId: string, info: AssignmentInfo): Promise<void> {
       await db
         .update(feedItems)
-        .set({ storyId, clusteredAt: sql`now()`, clusterError: null, clusterNextAttemptAt: null })
+        .set({
+          storyId,
+          clusteredAt: sql`now()`,
+          placedAt: sql`coalesce(${feedItems.placedAt}, now())`,
+          clusterError: null,
+          clusterNextAttemptAt: null,
+        })
         .where(eq(feedItems.id, article.id));
       await db.insert(storyAssignments).values({
         articleId: article.id,

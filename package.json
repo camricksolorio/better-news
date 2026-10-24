@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "embed:backfill": "tsx --env-file=.env --tsconfig tsconfig.json scripts/embed-backfill.ts",
+    "live-blogs:exclude": "tsx --env-file=.env --tsconfig tsconfig.json scripts/exclude-live-blogs.ts",
     "labels:export": "tsx --env-file=.env --tsconfig tsconfig.json scripts/export-labels.ts",
     "labels:import": "tsx --env-file=.env --tsconfig tsconfig.json scripts/import-labels.ts",
     "eval:snapshot": "tsx --env-file=.env --tsconfig tsconfig.json scripts/snapshot.ts",

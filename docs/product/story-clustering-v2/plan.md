@@ -53,27 +53,28 @@ Design: TDD parts 1, 2 and the data model in part 9. Nothing here changes how ar
 
 **Schema** (one migration, `pnpm db:generate` then `pnpm db:migrate`)
 
-- [ ] `feed_items`: `excluded_reason`, `content_hash`, `current_version_id`, `embedding_version_id`, `pairs_version_id`, `first_published_at` (not null after backfill), `placed_at`, and the partial index on `first_published_at`
-- [ ] New tables `article_versions`, `candidate_pairs`, `pair_verdicts`, `consolidation_runs`, `eval_events`, `eval_event_articles`, with the TDD's keys, indexes and canonical-order checks (`a < b`)
-- [ ] `stories`: `status` allows `merged`; `merged_into`; check that `merged_into IS NOT NULL` exactly when `status = 'merged'`; the status trigger allows `open→closed`, `open→merged` and `closed→merged`, and lets revert runs undo a `merged`
-- [ ] `story_assignments`: new `method` values (`consolidate`, `repair`, `revert`, `exclude`), `from_story_id`, `run_id`, `article_version_id`, `evidence`; the append-only trigger stays
-- [ ] Data backfill in the same migration: one `article_versions` row per existing article from its current text; `current_version_id = embedding_version_id` (existing vectors were built from the only text we have); `first_published_at = coalesce(published_at, created_at)`; `placed_at = clustered_at`
-  - [ ] Tests (local database): constraints reject impossible states (merged with no target, a pair with `a ≥ b`, a duplicate version hash); the status trigger allows only the listed transitions; the backfill gives every row a version and a `first_published_at`
+- [x] `feed_items`: `excluded_reason`, `content_hash`, `current_version_id`, `embedding_version_id`, `pairs_version_id`, `first_published_at` (not null after backfill), `placed_at`, and the partial index on `first_published_at`
+- [x] New tables `article_versions`, `candidate_pairs`, `pair_verdicts`, `consolidation_runs`, `eval_events`, `eval_event_articles`, with the TDD's keys, indexes and canonical-order checks (`a < b`)
+- [x] `stories`: `status` allows `merged`; `merged_into`; check that `merged_into IS NOT NULL` exactly when `status = 'merged'`; the status trigger allows `open→closed`, `open→merged` and `closed→merged`, and lets revert runs undo a `merged`
+- [x] `story_assignments`: new `method` values (`consolidate`, `repair`, `revert`, `exclude`), `from_story_id`, `run_id`, `article_version_id`, `evidence`; the append-only trigger stays
+- [x] Data backfill in the same migration: one `article_versions` row per existing article from its current text; `current_version_id = embedding_version_id` (existing vectors were built from the only text we have); `first_published_at = coalesce(published_at, created_at)`; `placed_at = clustered_at`
+  - Built 2026-10-24 as `drizzle/0009_v2_foundations.sql` (generated DDL plus a hand-written backfill, a `BEFORE INSERT` trigger for `first_published_at`, and the new status trigger). The backfill was checked by hand on a scratch database at the 0008 state with seeded rows (versions, hashes equal to Node's, embedding versions only where a vector exists); `content_hash` hashes the raw stored text so SQL and Node agree (TDD updated). It is **not applied to production yet**. Two checks before applying: Supabase's pooler dropped a long `\copy` earlier today, so run the migration over a direct connection or confirm `statement_timeout`; and the export in `backups/2026-10-24/` is the rollback
+  - [x] Tests (local database): constraints reject impossible states (merged with no target, a pair with `a ≥ b`, a duplicate version hash); the status trigger allows only the listed transitions; the backfill gives every row a version and a `first_published_at`
 
 **Ingest**
 
-- [ ] `lib/live-blog.ts`: `isLiveBlog({ sourceId, link, title })` with the per-source rule table from the TDD
-  - [ ] Tests: every production example in the TDD table matches; the known false positives (PBS `live-map-…`, Washington Examiner `live-grenade-…`) don't match; the title rule handles "Live:" and "Live updates –"
-- [ ] `/api/ingest`: skip live blogs before the upsert; set `excluded_reason` when an existing row starts matching; compute `content_hash`; never update `first_published_at`; insert new versions and move `current_version_id` (the TDD's SQL)
-  - [ ] Tests: unchanged text creates no version; a changed title creates one and moves `current_version_id`; a `published_at`-only change creates none; `first_published_at` survives a republish; a live blog is never inserted
-- [ ] `scripts/exclude-live-blogs.ts`: marks existing matches `excluded_reason = 'live_blog'`, with `--dry-run` listing them per source. Spot-check 20 with the owner before running it for real. It doesn't touch stories; Phase 5's repair moves them out
+- [x] `lib/live-blog.ts`: `isLiveBlog({ sourceId, link, title })` with the per-source rule table from the TDD
+  - [x] Tests: every production example in the TDD table matches; the known false positives (PBS `live-map-…`, Washington Examiner `live-grenade-…`) don't match; the title rule handles "Live:" and "Live updates –"
+- [x] `/api/ingest`: skip live blogs before the upsert; set `excluded_reason` when an existing row starts matching; compute `content_hash`; never update `first_published_at`; insert new versions and move `current_version_id` (the TDD's SQL)
+  - [x] Tests: unchanged text creates no version; a changed title creates one and moves `current_version_id`; a `published_at`-only change creates none; `first_published_at` survives a republish; a live blog is never inserted
+- [x] `scripts/exclude-live-blogs.ts` (`pnpm live-blogs:exclude`, dry run unless `--confirm`): marks existing matches `excluded_reason = 'live_blog'`, listing them per source. Spot-check 20 with the owner before running it for real. It doesn't touch stories; Phase 5's repair moves them out
 
 **Embed and v1 compatibility**
 
-- [ ] `/api/embed`: select rows whose vector is missing or stale (`embedding_version_id IS DISTINCT FROM current_version_id`), skip excluded rows, and write `embedding_version_id`
-  - [ ] Tests: a changed version is re-embedded and the old vector is kept until the new one lands; excluded rows are never selected
-- [ ] v1 `/api/cluster` (still live until Phase 4): skip excluded rows in pending selection and in kNN candidates; set `placed_at` on first assignment; use `first_published_at` as the article time
-  - [ ] Tests: existing `cluster.test.ts` and `assign.test.ts` still pass; an excluded article is neither clustered nor a candidate
+- [x] `/api/embed`: select rows whose vector is missing or stale (`embedding_version_id IS DISTINCT FROM current_version_id`), skip excluded rows, and write `embedding_version_id`
+  - [x] Tests: a changed version is re-embedded and the old vector is kept until the new one lands; excluded rows are never selected
+- [x] v1 `/api/cluster` (still live until Phase 4): skip excluded rows in pending selection and in kNN candidates; set `placed_at` on first assignment; use `first_published_at` as the article time
+  - [x] Tests: existing `cluster.test.ts` and `assign.test.ts` still pass; an excluded article is neither clustered nor a candidate
 - [ ] Deploy, then apply the migration to production after the export
 - [ ] After one week: count `article_versions` created per day by source (version churn, a TDD unknown), and record it here
 

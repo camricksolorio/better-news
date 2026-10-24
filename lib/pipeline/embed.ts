@@ -27,7 +27,10 @@ export type EmbedResult = { processed: number; remaining: number; failed: number
 
 function eligible(opts: Pick<EmbedOptions, "source" | "from" | "to">): SQL {
   const conditions: (SQL | undefined)[] = [
-    isNull(feedItems.embedding),
+    isNull(feedItems.excludedReason),
+    // Missing vector, or one built from an older version of the text. The old vector stays in place until the new
+    // one lands, so a clustered row keeps satisfying its embedding invariant.
+    or(isNull(feedItems.embedding), sql`${feedItems.embeddingVersionId} IS DISTINCT FROM ${feedItems.currentVersionId}`),
     lt(feedItems.embedAttempts, MAX_EMBED_ATTEMPTS),
     or(isNull(feedItems.embedNextAttemptAt), lte(feedItems.embedNextAttemptAt, sql`now()`)),
     opts.source ? eq(feedItems.sourceId, opts.source) : undefined,
@@ -42,10 +45,10 @@ export async function countRemaining(db: Db, opts: Pick<EmbedOptions, "source" |
   return row.n;
 }
 
-async function writeEmbeddings(db: Db, rows: { id: string; link: string }[], vectors: number[][]) {
+async function writeEmbeddings(db: Db, rows: { id: string; link: string; versionId: string | null }[], vectors: number[][]) {
   const values = rows.map(
     (row, i) =>
-      sql`(${row.id}::uuid, ${JSON.stringify(vectors[i])}::text, ${canonicalLink(row.link)}::text)`,
+      sql`(${row.id}::uuid, ${JSON.stringify(vectors[i])}::text, ${canonicalLink(row.link)}::text, ${row.versionId}::uuid)`,
   );
   await db.execute(sql`
     UPDATE feed_items AS f
@@ -53,9 +56,10 @@ async function writeEmbeddings(db: Db, rows: { id: string; link: string }[], vec
         embedding_model = ${EMBEDDING_MODEL},
         embedding_input_version = ${EMBEDDING_INPUT_VERSION},
         canonical_link = v.canonical,
+        embedding_version_id = v.version_id,
         embed_error = NULL,
         embed_next_attempt_at = NULL
-    FROM (VALUES ${sql.join(values, sql`, `)}) AS v(id, emb, canonical)
+    FROM (VALUES ${sql.join(values, sql`, `)}) AS v(id, emb, canonical, version_id)
     WHERE f.id = v.id
   `);
 }
@@ -85,7 +89,13 @@ export async function runEmbedStage(
   while (now() < opts.deadline && (opts.limit === undefined || processed + failed < opts.limit)) {
     const take = Math.min(batchSize, opts.limit === undefined ? batchSize : opts.limit - processed - failed);
     const rows = await db
-      .select({ id: feedItems.id, title: feedItems.title, summary: feedItems.summary, link: feedItems.link })
+      .select({
+        id: feedItems.id,
+        title: feedItems.title,
+        summary: feedItems.summary,
+        link: feedItems.link,
+        versionId: feedItems.currentVersionId,
+      })
       .from(feedItems)
       .where(eligible(opts))
       .orderBy(asc(feedItems.publishedAt), asc(feedItems.id))
