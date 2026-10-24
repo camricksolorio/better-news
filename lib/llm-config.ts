@@ -10,6 +10,16 @@ export const JEV_MODEL = "jev-latest";
 // Silver labeling (D12): a non-Gemini model so it does not share Gemini's blind spots.
 export const SILVER_MODEL = "gpt-4o-mini";
 
+// Story summaries (story-summary-v1 D10, D12): called directly on OpenAI, no fallback provider. The bake-off
+// compares these two; both IDs were confirmed in OpenAI's model list on 2026-10-24. Reasoning models take
+// reasoning_effort and may reject a custom temperature, so each candidate carries only what it accepts.
+export type SummaryModelConfig = { model: string; temperature?: number; reasoningEffort?: "minimal" | "low" | "medium" | "high" };
+export const SUMMARY_MODELS: Record<string, SummaryModelConfig> = {
+  "gpt-4o-mini": { model: "gpt-4o-mini", temperature: 0 },
+  "gpt-6-luna": { model: "gpt-6-luna", reasoningEffort: "low" },
+};
+export const SUMMARY_MODEL_DEFAULT = "gpt-4o-mini";
+
 export const EMBEDDING_MODEL = "gemini-embedding-2";
 export { EMBEDDING_DIMENSIONS } from "@/db/schema";
 export const EMBED_BATCH_SIZE = 25;
@@ -35,6 +45,8 @@ export const PRICES_PER_MILLION: Record<string, { input: number; output: number 
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
   // OpenAI price for silver labeling, looked up 2026-10-05 (the OpenRouter ones are kept for reference).
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  // Third-party list price looked up 2026-10-24; not yet confirmed on OpenAI's pricing page. Reasoning tokens bill as output.
+  "gpt-6-luna": { input: 0.1, output: 0.5 },
   // TypeSafe jev: $0.042 per 1M input tokens, output free (docs, 2026-10-05). Resolved versions ("jev-1.13.0") use this price too.
   "jev-latest": { input: 0.042, output: 0 },
   "anthropic/claude-sonnet-5.5": { input: 2, output: 10 },

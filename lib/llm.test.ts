@@ -164,6 +164,16 @@ describe("chat", () => {
     expect(row.costUsd).toBeCloseTo((1000 * 0.3 + 100 * 2.5) / 1_000_000);
   });
 
+  it("sends reasoning_effort and returns the call's usage and cost", async () => {
+    const { llm, fetchMock } = harness([() => chatOk("{}")]);
+    const out = await llm.chat({ ...chatArgs, provider: "openai", model: "gpt-6-luna", reasoningEffort: "low", jsonSchema: schema });
+    const body = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body).toMatchObject({ model: "gpt-6-luna", reasoning_effort: "low" });
+    expect(body.temperature).toBeUndefined();
+    expect(out.usage).toMatchObject({ inputTokens: 1000, outputTokens: 100 });
+    expect(out.usage?.costUsd).toBeCloseTo((1000 * 0.1 + 100 * 0.5) / 1_000_000);
+  });
+
   it("returns json null for invalid JSON", async () => {
     const { llm } = harness([() => chatOk("not json")]);
     const out = await llm.chat({ ...chatArgs, jsonSchema: schema });

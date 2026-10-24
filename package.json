@@ -24,6 +24,7 @@
     "eval:compare": "tsx --env-file=.env --tsconfig tsconfig.json scripts/compare-adjudicators.ts",
     "eval:audit": "tsx --env-file=.env --tsconfig tsconfig.json scripts/audit-sample.ts",
     "eval:audit-score": "tsx --env-file=.env --tsconfig tsconfig.json scripts/audit-score.ts",
+    "eval:summary": "tsx --env-file=.env --tsconfig tsconfig.json scripts/eval-summary.ts",
     "eval:silver": "tsx --env-file=.env --tsconfig tsconfig.json scripts/silver-label.ts",
     "eval:knn": "tsx --tsconfig tsconfig.json scripts/spike-knn.ts",
     "eval:prefix": "tsx --env-file=.env --tsconfig tsconfig.json scripts/spike-prefix.ts"

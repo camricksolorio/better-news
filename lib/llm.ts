@@ -385,11 +385,17 @@ export function createLlmClient(options: LlmClientOptions) {
   async function chatOnce(
     provider: Provider,
     model: string,
-    args: { messages: ChatMessage[]; jsonSchema?: { name: string; schema: object }; temperature?: number },
+    args: {
+      messages: ChatMessage[];
+      jsonSchema?: { name: string; schema: object };
+      temperature?: number;
+      reasoningEffort?: string;
+    },
   ): Promise<RawResult<string>> {
     return withRetries<string>(provider, model, async () => {
       const body: Record<string, unknown> = { model, messages: args.messages };
       if (args.temperature !== undefined) body.temperature = args.temperature;
+      if (args.reasoningEffort !== undefined) body.reasoning_effort = args.reasoningEffort;
       if (args.jsonSchema) {
         body.response_format = {
           type: "json_schema",
@@ -430,6 +436,8 @@ export function createLlmClient(options: LlmClientOptions) {
     // provider only (silver labeling uses a non-Gemini model on purpose, D12).
     provider?: Provider;
     temperature?: number;
+    // Sent as reasoning_effort, for reasoning models.
+    reasoningEffort?: string;
     model: string;
     fallbackModel?: string;
     messages: ChatMessage[];
@@ -438,7 +446,15 @@ export function createLlmClient(options: LlmClientOptions) {
     context?: CallContext;
     // Same key => the stored verdict is returned and no call is made.
     cacheKey?: string;
-  }): Promise<{ text: string; json: unknown | null; provider: Provider; model: string; cached: boolean }> {
+  }): Promise<{
+    text: string;
+    json: unknown | null;
+    provider: Provider;
+    model: string;
+    cached: boolean;
+    // Tokens and estimated cost of this call; absent when the answer came from the cache.
+    usage?: { inputTokens: number; outputTokens: number; costUsd: number | null };
+  }> {
     if (args.cacheKey) {
       const cached = await lookupCache(args.cacheKey);
       if (cached !== undefined) {
@@ -476,7 +492,18 @@ export function createLlmClient(options: LlmClientOptions) {
           cacheKey: args.cacheKey,
           response: args.cacheKey ? { text, json, provider, model } : undefined,
         });
-        return { text, json, provider, model, cached: false };
+        return {
+          text,
+          json,
+          provider,
+          model,
+          cached: false,
+          usage: {
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            costUsd: estimateCostUsd(model, usage.inputTokens, usage.outputTokens) ?? usage.providerCostUsd,
+          },
+        };
       } catch (e) {
         lastError = e as Error;
         await record({
