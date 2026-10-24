@@ -3,7 +3,9 @@ import { eq, sql } from "drizzle-orm";
 import { feedItems } from "@/db/schema";
 import { connectTestDb, resetTestDb } from "@/tests/test-db";
 import { CircuitOpenError, LlmError, QuotaExhaustedError } from "@/lib/llm";
+import type { ParsedFeedItem } from "@/lib/rss";
 import { runEmbedStage } from "./embed";
+import { storeFeedItems } from "./ingest";
 
 const { client, db } = connectTestDb();
 afterAll(() => client.end());
@@ -185,5 +187,64 @@ describe("runEmbedStage", () => {
     for (let i = 0; i < 5; i++) await ingest();
     const result = await runEmbedStage(db, okLlm(), { deadline: far(), batchSize: 2, limit: 3 });
     expect(result).toMatchObject({ processed: 3, remaining: 2 });
+  });
+});
+
+describe("runEmbedStage with article versions", () => {
+  const parsed = (over: Partial<ParsedFeedItem> = {}): ParsedFeedItem => ({
+    guid: "v1",
+    title: "Court halts tariffs",
+    link: "https://example.com/a/v1",
+    summary: "A federal court halted the tariffs.",
+    imageUrl: null,
+    publishedAt: new Date("2026-10-20T10:00:00Z"),
+    ...over,
+  });
+
+  it("records the version each vector was built from", async () => {
+    await storeFeedItems(db, "src", [parsed()]);
+    await runEmbedStage(db, okLlm(), { deadline: far() });
+    const row = (await db.select().from(feedItems).where(eq(feedItems.guid, "v1")))[0];
+    expect(row.currentVersionId).not.toBeNull();
+    expect(row.embeddingVersionId).toBe(row.currentVersionId);
+  });
+
+  it("re-embeds a row whose text changed, and keeps the old vector until the new one lands", async () => {
+    await storeFeedItems(db, "src", [parsed()]);
+    await runEmbedStage(db, okLlm(), { deadline: far() });
+    const before = (await db.select().from(feedItems).where(eq(feedItems.guid, "v1")))[0];
+
+    await storeFeedItems(db, "src", [parsed({ title: "Court blocks tariffs" })]);
+    const failing = { embed: vi.fn(async () => { throw new LlmError("500", "gemini", true, 500); }) };
+    await runEmbedStage(db, failing, { deadline: far() });
+    const stale = (await db.select().from(feedItems).where(eq(feedItems.guid, "v1")))[0];
+    expect(stale.embedding).toEqual(before.embedding);
+    expect(stale.embeddingVersionId).toBe(before.currentVersionId);
+
+    await db.update(feedItems).set({ embedNextAttemptAt: null }).where(eq(feedItems.guid, "v1"));
+    const llm = okLlm();
+    const result = await runEmbedStage(db, llm, { deadline: far() });
+    expect(result).toEqual({ processed: 1, remaining: 0, failed: 0 });
+    expect(llm.embed.mock.calls[0][0].inputs[0]).toContain("Court blocks tariffs");
+    const after = (await db.select().from(feedItems).where(eq(feedItems.guid, "v1")))[0];
+    expect(after.embeddingVersionId).toBe(after.currentVersionId);
+    expect(after.embeddingVersionId).not.toBe(before.embeddingVersionId);
+  });
+
+  it("does not re-embed unchanged text", async () => {
+    await storeFeedItems(db, "src", [parsed()]);
+    await runEmbedStage(db, okLlm(), { deadline: far() });
+    await storeFeedItems(db, "src", [parsed({ publishedAt: new Date("2026-10-21T00:00:00Z") })]);
+    const llm = okLlm();
+    expect(await runEmbedStage(db, llm, { deadline: far() })).toEqual({ processed: 0, remaining: 0, failed: 0 });
+    expect(llm.embed).not.toHaveBeenCalled();
+  });
+
+  it("never selects an excluded row", async () => {
+    const row = await ingest({ excludedReason: "live_blog" });
+    const llm = okLlm();
+    expect(await runEmbedStage(db, llm, { deadline: far() })).toEqual({ processed: 0, remaining: 0, failed: 0 });
+    expect(llm.embed).not.toHaveBeenCalled();
+    expect((await get(row.id)).embedding).toBeNull();
   });
 });

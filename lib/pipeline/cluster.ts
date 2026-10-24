@@ -34,8 +34,9 @@ export type ClusterOptions = {
 export type ClusterResult = { processed: number; remaining: number; failed: number; closed: number };
 
 function pending(model: string, opts: Pick<ClusterOptions, "source" | "from" | "to">): SQL {
-  const effective = sql`coalesce(${feedItems.publishedAt}, ${feedItems.createdAt})`;
+  const effective = feedItems.firstPublishedAt;
   return and(
+    isNull(feedItems.excludedReason),
     isNotNull(feedItems.embedding),
     isNull(feedItems.clusteredAt),
     eq(feedItems.embeddingModel, model),
@@ -79,7 +80,8 @@ export async function runClusterStage(db: Db, opts: ClusterOptions): Promise<Clu
   const cfg = opts.config ?? DEFAULT_CLUSTER_CONFIG;
   const now = opts.now ?? Date.now;
   const version = pipelineVersion(cfg);
-  const effective = sql<Date>`coalesce(${feedItems.publishedAt}, ${feedItems.createdAt})`;
+  // The clustering time: when the article first appeared, which later edits to published_at do not change.
+  const effective = feedItems.firstPublishedAt;
   let processed = 0;
   let failed = 0;
   const skipped = new Set<string>();

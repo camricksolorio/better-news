@@ -45,3 +45,6 @@ next-env.d.ts
 /eval/prefix-spike-embeddings.json
 /eval/public/
 /wcep-extracted-download/
+
+# local database exports (may contain full article text)
+/backups/

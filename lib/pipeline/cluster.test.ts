@@ -76,6 +76,39 @@ describe("runClusterStage", () => {
     expect((await get(mine.id)).clusteredAt).not.toBeNull();
   });
 
+  it("never clusters an excluded article, and never uses one as a candidate", async () => {
+    const live = await embedded(0, 0, { excludedReason: "live_blog" });
+    const first = await embedded(1, 90);
+    const second = await embedded(2, 90);
+    // `first` is clustered, then flagged (as ingest does when a row starts matching a live-blog rule).
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes, limit: 1 });
+    expect((await get(live.id)).clusteredAt).toBeNull();
+    await db.update(feedItems).set({ excludedReason: "live_blog" }).where(eq(feedItems.id, first.id));
+    const result = await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
+    expect(result).toMatchObject({ processed: 1, remaining: 0 });
+    expect((await get(live.id)).clusteredAt).toBeNull();
+    expect((await get(second.id)).storyId).not.toBe((await get(first.id)).storyId);
+  });
+
+  it("sets placed_at when an article is first placed in a story", async () => {
+    const a = await embedded(0, 0);
+    expect(a.placedAt).toBeNull();
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
+    const placed = (await get(a.id)).placedAt;
+    expect(placed).toBeInstanceOf(Date);
+    expect(placed).toEqual((await get(a.id)).clusteredAt);
+  });
+
+  it("uses first_published_at, not a later published_at, as the article time", async () => {
+    const a = await embedded(0, 0);
+    await db
+      .update(feedItems)
+      .set({ publishedAt: new Date(T0 + 30 * H) })
+      .where(eq(feedItems.id, a.id));
+    await runClusterStage(db, { deadline: far(), config: cfg36, adjudicate: yes });
+    expect((await story((await get(a.id)).storyId!)).firstArticleAt.getTime()).toBe(T0);
+  });
+
   it("turns on HNSW iterative scans for the candidate query (kNN spike, 2026-10-05)", async () => {
     const setting = await db.transaction(async (tx) => {
       const store = createDbStore(tx as unknown as Db, "test");

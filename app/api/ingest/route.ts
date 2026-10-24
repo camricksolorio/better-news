@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { feedItems } from "@/db/schema";
+import { storeFeedItems } from "@/lib/pipeline/ingest";
 import { parseRssFeed } from "@/lib/rss";
 import { FEED_SOURCES } from "@/feeds.config";
 
@@ -30,29 +29,7 @@ async function ingestSource(sourceId: string, url: string): Promise<SourceResult
       return { sourceId, ok: true, itemCount: 0 };
     }
 
-    await db
-      .insert(feedItems)
-      .values(
-        items.map((item) => ({
-          sourceId,
-          guid: item.guid,
-          title: item.title,
-          link: item.link,
-          summary: item.summary,
-          imageUrl: item.imageUrl,
-          publishedAt: item.publishedAt,
-        })),
-      )
-      .onConflictDoUpdate({
-        target: feedItems.guid,
-        set: {
-          title: sql`excluded.title`,
-          link: sql`excluded.link`,
-          summary: sql`excluded.summary`,
-          imageUrl: sql`excluded.image_url`,
-          publishedAt: sql`excluded.published_at`,
-        },
-      });
+    await storeFeedItems(db, sourceId, items);
 
     return { sourceId, ok: true, itemCount: items.length };
   } catch (error) {
