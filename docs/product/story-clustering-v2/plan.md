@@ -16,7 +16,7 @@ Checked 2026-10-24:
 | Check | Status |
 |---|---|
 | PRD | ✅ Accepted 2026-10-24, including the targets in R1, R2 and R7 |
-| TDD | ✅ Ready for review; Q1–Q5 answered by the owner 2026-10-24 |
+| TDD | ✅ Approved 2026-10-24 (Q1–Q5 answered by the owner) |
 | `JEV_API_KEY`, `GOOGLE_GEMINI_API_KEY` (paid tier) | ✅ In use in production (18k jev calls with 0 failures, Oct 6–24) |
 | jev version pinning | ⚠️ Unknown. `jev-latest` moved from 1.13.0 to 1.14.0 on 2026-10-22. Checked in Phase 1 |
 | Supabase backups | ⚠️ Free plan, no backups (v1 finding). Phase 1 exports `feed_items` before the migration |
