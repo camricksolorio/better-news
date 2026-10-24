@@ -18,7 +18,7 @@ Checked 2026-10-24:
 | PRD | ✅ Accepted 2026-10-24, including the targets in R1, R2 and R7 |
 | TDD | ✅ Approved 2026-10-24 (Q1–Q5 answered by the owner) |
 | `JEV_API_KEY`, `GOOGLE_GEMINI_API_KEY` (paid tier) | ✅ In use in production (18k jev calls with 0 failures, Oct 6–24) |
-| jev version pinning | ⚠️ Unknown. `jev-latest` moved from 1.13.0 to 1.14.0 on 2026-10-22. Checked in Phase 1 |
+| jev version pinning | ✅ `jev-1.14.0` is accepted as a pin (probed 2026-10-24). `jev-latest` moved from 1.13.0 to 1.14.0 on 2026-10-22 |
 | Supabase backups | ⚠️ Free plan, no backups (v1 finding). Phase 1 exports `feed_items` before the migration |
 | Drizzle migration journal | ⚠️ `drizzle.__drizzle_migrations` has 6 rows for 8 migrations (v1 plan, migration 0008). Phase 1 reconciles it before relying on `db:migrate` |
 | Branch | ✅ `feat/story-clustering-v2` from `main` (2026-10-24), carrying the `docs/product/` restructure and the v2 docs |
@@ -42,10 +42,14 @@ Design: TDD parts 1, 2 and the data model in part 9. Nothing here changes how ar
 **Readiness items**
 
 - [x] Create `feat/story-clustering-v2` from `main`; move the v2 docs (`prd.md`, `tdd.md`, `plan.md`) and the `docs/AGENTS.md` table edit there (2026-10-24, with the `docs/product/` and `docs/research/` restructure as its own commit)
-- [ ] Probe jev version pinning: one `classify()` call with `model: "jev-1.14.0"` (needs a go-ahead; a fraction of a cent). Record whether it is accepted and what `model` comes back. If pinning is refused, follow the TDD fallback (key verdicts on the resolved version and rely on the `adjudicator_version` health check), and update the TDD
-- [ ] Re-run the v1 reference comparison on jev 1.14.0 (`pnpm eval:compare`, 86 human reference pairs; needs a go-ahead). Record precision versus τ next to the 1.13.0 numbers in the v1 plan
+- [x] Probe jev version pinning: one `classify()` call with `model: "jev-1.14.0"` (needs a go-ahead; a fraction of a cent). Record whether it is accepted and what `model` comes back. If pinning is refused, follow the TDD fallback (key verdicts on the resolved version and rely on the `adjudicator_version` health check), and update the TDD
+  - Done 2026-10-24: **pinning is accepted.** A raw `POST /v1/systemone` with `model: "jev-1.14.0"` returned 200 with `model: "jev-1.14.0"`. The TDD's pin design stands; no TDD change needed
+- [x] Re-run the v1 reference comparison on jev 1.14.0 (`pnpm eval:compare`, 86 human reference pairs; needs a go-ahead). Record precision versus τ next to the 1.13.0 numbers in the v1 plan
+  - Done 2026-10-24 (86 calls, about $0.002; scores in `eval/public/comparison-2026-10-24.json`). jev 1.14.0 on the 8 `same` pairs: precision 85.7% at τ 0.85 (7 joins), **100% at τ ≥ 0.90** (5 joins at 0.90 and 0.93, recall 62.5% at both; 1.13.0 had 4 joins and recall 50% at τ ≥ 0.93). One `related` pair gets `same` above τ 0.85 and none above 0.90. 1.14.0 is no worse than 1.13.0 here, so v1's τ 0.93 still holds on the reference pairs. The set is small; Phase 2 recalibrates on events
 - [ ] Reconcile the Drizzle migration journal with what's applied in production, so `db:migrate` won't replay 0001–0008. Record what was done
-- [ ] Export `feed_items` (plus `story_assignments` and the human-label tables) before the migration. Agree with the owner where the export is stored
+- [x] Export `feed_items` (plus `story_assignments` and the human-label tables) before the migration. Agree with the owner where the export is stored
+  - Done 2026-10-24: gitignored local `backups/2026-10-24/` (512 MB): `feed_items` (26,977 rows) and `stories` (23,497) in 2,000-row parts, plus `story_assignments` (26,977), `eval_pair_labels` (536) and `join_audit_items` (150); row counts verified against production. A single-file `\copy` of the two big tables was cut short (the connection dropped), hence the parts. The files include embeddings and full article text and are not in git; they are the only copy, so keep them until the migration is verified
+- Migration journal findings (2026-10-24, read-only; **not yet reconciled, waiting for the owner's OK**): `drizzle.__drizzle_migrations` holds 0000–0005 with hashes matching the files. 0006–0008 are applied (`join_audit_items` exists, RLS is on, `cluster_attempts` columns exist) but have no rows. Drizzle compares only the newest `created_at` (0005's 1791209507863), so `db:migrate` would replay 0006–0008 and fail. Proposed fix: insert 3 rows (`hash` = sha256 of the SQL file, `created_at` = the journal's `when`): 0006 `81a01a0b…020c` / 1791256349078; 0007 `b0d41560…1548` / 1791331348543; 0008 `a271bbb5…8b08` / 1791508925057
 
 **Schema** (one migration, `pnpm db:generate` then `pnpm db:migrate`)
 
