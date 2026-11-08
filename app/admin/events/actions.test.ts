@@ -9,29 +9,36 @@ vi.mock("next/navigation", () => ({
     throw new Error(`NEXT_REDIRECT:${path}`);
   },
 }));
+const load = vi.fn();
 const save = vi.fn();
 const clear = vi.fn();
 vi.mock("@/lib/eval/event-labeling", () => ({
   saveEventLabel: (...a: unknown[]) => save(...a),
   clearEventLabel: (...a: unknown[]) => clear(...a),
-  loadEvent: async () => ({ event: { id: "e" }, labeled: [], candidates: [] }),
+  loadEvent: async (...a: unknown[]) => {
+    load(...a);
+    return { event: { id: "e" }, labeled: [], candidates: [] };
+  },
 }));
 vi.mock("@/db", () => ({ db: {} }));
 
 import { sessionToken } from "@/lib/admin-auth";
-import { clearEventLabelAction, labelEventArticleAction } from "./actions";
+import { clearEventLabelAction, labelEventArticleAction, loadEventAction } from "./actions";
 
 beforeEach(() => {
   process.env.ADMIN_SECRET = "correct horse";
   cookieStore.value = undefined;
   save.mockClear();
   clear.mockClear();
+  load.mockClear();
 });
 
 describe("event labelling actions", () => {
   it("refuse an unauthenticated request without touching the data", async () => {
     await expect(labelEventArticleAction("e", "a", "in")).rejects.toThrow(/NEXT_REDIRECT:\/admin\/login/);
     await expect(clearEventLabelAction("e", "a")).rejects.toThrow(/NEXT_REDIRECT/);
+    await expect(loadEventAction("e", true)).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(load).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
     expect(clear).not.toHaveBeenCalled();
   });
@@ -43,5 +50,15 @@ describe("event labelling actions", () => {
     expect(after.event.id).toBe("e");
     await clearEventLabelAction("e", "a");
     expect(clear).toHaveBeenCalledWith({}, "e", "a");
+  });
+
+  it("pass the wide-floor choice through when reloading", async () => {
+    cookieStore.value = sessionToken()!;
+    await labelEventArticleAction("e", "a", "in", true);
+    expect(load).toHaveBeenLastCalledWith({}, "e", { wide: true });
+    await clearEventLabelAction("e", "a");
+    expect(load).toHaveBeenLastCalledWith({}, "e", { wide: false });
+    await loadEventAction("e", true);
+    expect(load).toHaveBeenLastCalledWith({}, "e", { wide: true });
   });
 });

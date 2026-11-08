@@ -43,16 +43,28 @@ async function event(seed: { id: string }, over: Partial<typeof evalEvents.$infe
   return e;
 }
 
-const candidateIds = async (eventId: string) => (await loadEvent(db, eventId))!.candidates.map((c) => c.id);
+const candidateIds = async (eventId: string, wide = false) => (await loadEvent(db, eventId, { wide }))!.candidates.map((c) => c.id);
 
 describe("loadEvent candidates", () => {
-  it("proposes articles within 48h and cosine 0.70 of an in article, most similar first", async () => {
+  it("proposes articles within 48h and cosine 0.85 of an in article, most similar first", async () => {
     const seed = await article(0, 0);
     const close = await article(2, 10); // cos 0.985
-    const mid = await article(20, 30); // cos 0.866
-    const edge = await article(-47, 45); // cos 0.707, 47h before
+    const mid = await article(20, 25); // cos 0.906
+    const edge = await article(-47, 30); // cos 0.866, 47h before
+    await article(5, 35); // cos 0.819: below the default floor
     const e = await event(seed);
     expect(await candidateIds(e.id)).toEqual([close.id, mid.id, edge.id]);
+  });
+
+  it("includes articles down to cosine 0.70 in wide mode, still most similar first", async () => {
+    const seed = await article(0, 0);
+    const close = await article(2, 10); // 0.985
+    const low = await article(5, 35); // 0.819
+    const lower = await article(-47, 45); // 0.707, 47h before
+    await article(3, 50); // 0.643: below even the wide floor
+    const e = await event(seed);
+    expect(await candidateIds(e.id)).toEqual([close.id]);
+    expect(await candidateIds(e.id, true)).toEqual([close.id, low.id, lower.id]);
   });
 
   it("leaves out articles too far in time or too dissimilar", async () => {
@@ -84,7 +96,7 @@ describe("loadEvent candidates", () => {
   it("widens when an article is marked in, and not when it is marked related or out", async () => {
     const seed = await article(0, 0);
     const x = await article(40, 30); // within 48h and 0.866 of the seed
-    const y = await article(80, 70); // 80h from the seed and cos 0.34 to it, but 40h and cos 0.77 from x
+    const y = await article(80, 55); // 80h from the seed and cos 0.57 to it, but 40h and cos 0.91 from x
     const e = await event(seed);
     expect(await candidateIds(e.id)).toEqual([x.id]);
 

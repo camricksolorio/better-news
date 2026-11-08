@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { Candidate, EventArticle, EventLabel, LabeledArticle, LoadedEvent } from "@/lib/eval/event-labeling";
-import { clearEventLabelAction, labelEventArticleAction } from "../actions";
+import { clearEventLabelAction, labelEventArticleAction, loadEventAction } from "../actions";
 
 const KEYS: Record<string, EventLabel> = { i: "in", r: "related", o: "out" };
 const BUTTONS: { label: EventLabel; hint: string; style: string }[] = [
@@ -18,6 +18,7 @@ export function EventUI({ initial }: { initial: LoadedEvent }) {
   const [skipped, setSkipped] = useState<string[]>([]);
   const [showDefinition, setShowDefinition] = useState(false);
   const [showLabeled, setShowLabeled] = useState(false);
+  const [wide, setWide] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,7 +33,7 @@ export function EventUI({ initial }: { initial: LoadedEvent }) {
       if (busy) return;
       setBusy(true);
       try {
-        setState(await labelEventArticleAction(state.event.id, articleId, l));
+        setState(await labelEventArticleAction(state.event.id, articleId, l, wide));
         setSkipped((s) => s.filter((id) => id !== articleId));
         setError(null);
       } catch (e) {
@@ -41,7 +42,7 @@ export function EventUI({ initial }: { initial: LoadedEvent }) {
         setBusy(false);
       }
     },
-    [busy, state.event.id],
+    [busy, state.event.id, wide],
   );
 
   const clear = useCallback(
@@ -49,7 +50,7 @@ export function EventUI({ initial }: { initial: LoadedEvent }) {
       if (busy) return;
       setBusy(true);
       try {
-        setState(await clearEventLabelAction(state.event.id, articleId));
+        setState(await clearEventLabelAction(state.event.id, articleId, wide));
         setError(null);
       } catch (e) {
         setError(`Not cleared: ${(e as Error).message}`);
@@ -57,8 +58,22 @@ export function EventUI({ initial }: { initial: LoadedEvent }) {
         setBusy(false);
       }
     },
-    [busy, state.event.id],
+    [busy, state.event.id, wide],
   );
+
+  const toggleWide = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      setState(await loadEventAction(state.event.id, !wide));
+      setWide(!wide);
+      setError(null);
+    } catch (e) {
+      setError(`Could not reload: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, state.event.id, wide]);
 
   // Undo takes back the most recent human label.
   const lastHuman = [...state.labeled].filter((a) => a.labeler === "human").pop();
@@ -94,7 +109,10 @@ export function EventUI({ initial }: { initial: LoadedEvent }) {
         </span>
         <span className="text-zinc-400">·</span>
         <span className="tabular-nums text-zinc-500">{queue.length} to review</span>
-        <button onClick={() => setShowLabeled((v) => !v)} className="ml-auto rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700">Labelled</button>
+        <button onClick={() => void toggleWide()} disabled={busy} aria-pressed={wide} className={`ml-auto rounded border px-2 py-1 text-xs ${wide ? "border-amber-600 bg-amber-50 dark:bg-amber-950" : "border-zinc-300 dark:border-zinc-700"}`}>
+          {wide ? "Showing 70%+" : "Show 70–85% too"}
+        </button>
+        <button onClick={() => setShowLabeled((v) => !v)} className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700">Labelled</button>
         <button onClick={() => setShowDefinition((v) => !v)} className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700">Definition</button>
       </div>
 
@@ -132,7 +150,7 @@ export function EventUI({ initial }: { initial: LoadedEvent }) {
         </section>
       ) : (
         <p className="rounded-lg border border-zinc-200 p-4 text-sm text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
-          No more candidates. Anything within 48 hours and 70% similar to an in article has been labelled. Finished with this event.
+          {wide ? "No more candidates." : "No more candidates at 85% similarity."} Anything within 48 hours and {wide ? "70%" : "85%"} similar to an in article has been labelled.{wide ? "" : " Use “Show 70–85% too” to spot-check lower ones."}
         </p>
       )}
 
