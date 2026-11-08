@@ -22,6 +22,9 @@ export default async function AdminHome() {
           <a href="/admin/label" className="underline">Label pairs</a>: judge same / related / different (the eval ground truth)
         </li>
         <li>
+          <Link href="/admin/events" className="underline">Event labels</Link>: mark which articles belong to each sampled event (clustering v2 evaluation)
+        </li>
+        <li>
           <a href="/admin/audit" className="underline">Join audit</a>: review a random sample of joins (works on a phone)
         </li>
         <li>
