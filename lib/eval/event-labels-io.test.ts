@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { evalEventArticles, evalEvents, feedItems } from "@/db/schema";
 import { connectTestDb, resetTestDb } from "@/tests/test-db";
-import { exportEvents, importEvents, parseEventsJsonl, toEventsJsonl, type EventRecord } from "./event-labels-io";
+import { exportEvents, importEvents, parseEventsJsonl, toEvalEvent, toEventsJsonl, type EventRecord } from "./event-labels-io";
 
 const { client, db } = connectTestDb();
 afterAll(() => client.end());
@@ -97,5 +97,24 @@ describe("event label export/import", () => {
   it("ignores lines that are not event records", () => {
     const text = '{"type":"pair","a":"x","b":"y"}\n{"type":"event","id":"i","title":"t","split":"dev","note":null,"createdAt":"2026-11-08T00:00:00.000Z","articles":[]}\n';
     expect(parseEventsJsonl(text).map((r) => r.id)).toEqual(["i"]);
+  });
+});
+
+describe("toEvalEvent", () => {
+  const record = (labelers: string[]): EventRecord => ({
+    type: "event",
+    id: "e",
+    title: "E",
+    split: "holdout",
+    note: null,
+    createdAt: "2026-11-08T00:00:00.000Z",
+    articles: labelers.map((labeler, i) => ({ guid: `g${i}`, label: "in" as const, labeler, createdAt: "2026-11-08T00:00:00.000Z" })),
+  });
+
+  it("maps labels by guid and counts an event as human-labelled only beyond the sampler's seed", () => {
+    const labelled = toEvalEvent(record(["sampler", "human"]));
+    expect(labelled).toMatchObject({ id: "e", split: "holdout", humanLabeled: true });
+    expect(labelled.labels.get("g1")).toBe("in");
+    expect(toEvalEvent(record(["sampler"])).humanLabeled).toBe(false);
   });
 });

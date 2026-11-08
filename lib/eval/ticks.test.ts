@@ -60,8 +60,8 @@ describe("planTicks", () => {
   });
 
   it("falls back to the clustering time when an article has no stored time", () => {
-    const { createdAt: _drop, ...bare } = art("z", 1);
-    expect(planTicks([bare as SnapshotArticle], {})).toHaveLength(1);
+    const bare: SnapshotArticle = { ...art("z", 1), createdAt: undefined };
+    expect(planTicks([bare], {})).toHaveLength(1);
   });
 });
 

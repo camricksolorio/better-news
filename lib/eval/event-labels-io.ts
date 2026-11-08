@@ -4,6 +4,7 @@
 import { eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { evalEventArticles, evalEvents, feedItems } from "@/db/schema";
+import type { EvalEvent } from "./events";
 
 export type EventArticleRecord = {
   guid: string;
@@ -102,4 +103,16 @@ export async function importEvents(db: Db, records: EventRecord[]): Promise<Even
     }
   }
   return { events: records.length, labels, skippedMissingArticle: skipped };
+}
+
+// An event as the metrics see it. Only events the owner has labelled beyond the sampler's seed count; the others
+// would score a trivial recall of 1.
+export function toEvalEvent(r: EventRecord): EvalEvent {
+  return {
+    id: r.id,
+    title: r.title,
+    split: r.split,
+    labels: new Map(r.articles.map((a) => [a.guid, a.label])),
+    humanLabeled: r.articles.some((a) => a.labeler !== "sampler"),
+  };
 }
