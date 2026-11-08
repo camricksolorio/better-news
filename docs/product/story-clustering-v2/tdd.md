@@ -144,7 +144,7 @@ WHERE v.article_id = f.id AND v.content_hash = f.content_hash
   AND f.guid = ANY($guids) AND f.current_version_id IS DISTINCT FROM v.id;
 ```
 
-A change to `published_at` alone creates no version. For existing rows, the migration creates one version from the current text and sets `first_published_at = coalesce(published_at, created_at)`, which is the best we have. The **clustering time** of an article is `first_published_at`.
+The upsert only rewrites a row when one of its feed fields (title, link, summary, image, `published_at`, `content_hash`) differs from the stored value, because rewriting a row with a vector also writes to the vector index. A change to `published_at` alone creates no version. For existing rows, the migration creates one version from the current text and sets `first_published_at = coalesce(published_at, created_at)`, which is the best we have. The **clustering time** of an article is `first_published_at`.
 
 #### 2. Re-embedding changed text
 

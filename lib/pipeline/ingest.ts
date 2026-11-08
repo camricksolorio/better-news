@@ -49,8 +49,13 @@ export async function storeFeedItems(db: Db, sourceId: string, parsed: ParsedFee
         publishedAt: sql`excluded.published_at`,
         contentHash: sql`excluded.content_hash`,
       },
-      // Rows already excluded stay as they were.
-      setWhere: isNull(feedItems.excludedReason),
+      // Rows already excluded stay as they were. A row whose feed fields are all unchanged is not rewritten: most
+      // items repeat unchanged on every run, and each rewrite of a row with a vector also writes to the vector index.
+      setWhere: and(
+        isNull(feedItems.excludedReason),
+        sql`(${feedItems.title}, ${feedItems.link}, ${feedItems.summary}, ${feedItems.imageUrl}, ${feedItems.publishedAt}, ${feedItems.contentHash})
+          IS DISTINCT FROM (excluded.title, excluded.link, excluded.summary, excluded.image_url, excluded.published_at, excluded.content_hash)`,
+      ),
     });
 
   const guids = sql.join(keep.map((item) => sql`${item.guid}`), sql`, `);
@@ -69,4 +74,24 @@ export async function storeFeedItems(db: Db, sourceId: string, parsed: ParsedFee
   `);
 
   return { stored: keep.length, excluded: live.length };
+}
+
+// An ingest that was cut off after the upsert leaves rows with a hash but no version. The next ingest fixes the ones
+// still in a feed; this fixes the rest. Idempotent.
+export async function repairMissingVersions(db: Db): Promise<{ repaired: number }> {
+  await db.execute(sql`
+    INSERT INTO article_versions (article_id, title, summary, published_at, content_hash)
+    SELECT id, title, summary, published_at, content_hash FROM feed_items
+    WHERE current_version_id IS NULL AND excluded_reason IS NULL AND content_hash IS NOT NULL
+    ON CONFLICT (article_id, content_hash) DO NOTHING
+  `);
+  const rows = (await db.execute(sql`
+    UPDATE feed_items f SET current_version_id = v.id,
+      embedding_version_id = CASE WHEN f.embedding IS NOT NULL AND f.embedding_version_id IS NULL THEN v.id ELSE f.embedding_version_id END
+    FROM article_versions v
+    WHERE v.article_id = f.id AND v.content_hash = f.content_hash
+      AND f.current_version_id IS NULL AND f.excluded_reason IS NULL
+    RETURNING f.id
+  `)) as unknown as unknown[];
+  return { repaired: rows.length };
 }
