@@ -11,6 +11,11 @@ export type SnapshotArticle = {
   time: string; // ISO, published_at or created_at
   thin: boolean;
   embedding: number[];
+  // v2 snapshots (story-clustering-v2): `time` is first_published_at, the text version this vector belongs to,
+  // when the article was first stored (for the replay's ingest ticks), and any exclusion.
+  versionId?: string | null;
+  createdAt?: string;
+  excludedReason?: string | null;
 };
 
 export type Decision = {
