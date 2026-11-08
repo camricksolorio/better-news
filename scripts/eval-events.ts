@@ -31,6 +31,9 @@ import { planTicks, runStrategy, type Strategy } from "@/lib/eval/ticks";
 import { createV1Strategy } from "@/lib/eval/v1-strategy";
 import { createV2Strategy } from "@/lib/eval/v2-strategy";
 
+// The jev request carries the question and the definition on top of the two articles; calibrated on the 2026-11-08
+// runs (4,347 and 31,961 calls billed about 650 input tokens each against ~436 counted from the article text alone).
+const JEV_OVERHEAD_TOKENS = 215;
 const pct = (x: number | null) => (x === null ? "n/a" : `${(x * 100).toFixed(1)}%`);
 const usd = (x: number) => `$${x.toFixed(x < 1 ? 3 : 2)}`;
 const latest = (prefix: string) =>
@@ -125,7 +128,7 @@ async function main() {
       };
       const strategy = createV2Strategy({ cfg: v2cfg, judge, store: createMemoryVerdictStore() });
       const result = await runStrategy(planTicks(snapshot, {}), strategy);
-      const perCall = calls === 0 ? 0 : chars / calls / 4;
+      const perCall = calls === 0 ? 0 : chars / calls / 4 + (model.startsWith("jev") ? JEV_OVERHEAD_TOKENS : 0);
       const cost = (n: number) => (n * perCall * price.input + n * 60 * price.output) / 1_000_000;
       const pairs = result.candidatePairs?.size ?? 0;
       console.log(`${pairs} candidate pairs retrieved (${(pairs / snapshot.length).toFixed(1)} per article); ${calls} are in scope to judge, ~${Math.round(perCall)} input tokens per call`);
@@ -138,7 +141,7 @@ async function main() {
     }
     const { adjudicate, measured } = measuringAdjudicator(snapshot);
     await runStrategy(planTicks(snapshot, {}), createV1Strategy({ cfg, adjudicate }));
-    const perCall = measured.calls === 0 ? 0 : measured.inputChars / measured.calls / 4;
+    const perCall = measured.calls === 0 ? 0 : measured.inputChars / measured.calls / 4 + (model.startsWith("jev") ? JEV_OVERHEAD_TOKENS : 0);
     const cost = (calls: number) => (calls * perCall * price.input + calls * 60 * price.output) / 1_000_000;
     console.log(`${measured.calls} articles reach the classifier (${pct(measured.calls / snapshot.length)}), ~${Math.round(perCall)} input tokens per call`);
     console.log(`estimate: ${measured.calls}-${measured.calls * 2} calls, ${usd(cost(measured.calls))}-${usd(cost(measured.calls * 2))} for ${model}, before the verdict cache`);
