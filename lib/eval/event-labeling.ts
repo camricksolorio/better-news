@@ -1,6 +1,6 @@
 // The event-labelling queue (story-clustering-v2 TDD part 8): for one event, proposes the articles the owner should
-// judge next and stores the labels. Candidates are articles within 48h and cosine 0.70 of any article already marked
-// `in`, so they widen as more `in` articles are found.
+// judge next and stores the labels. Candidates are articles within 48h and cosine 0.85 (0.70 in wide mode) of any
+// article already marked `in`, so they widen as more `in` articles are found.
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { evalEventArticles, evalEvents, feedItems } from "@/db/schema";
@@ -10,7 +10,10 @@ export const EVENT_LABELS = ["in", "related", "out"] as const;
 export type EventLabel = (typeof EVENT_LABELS)[number];
 
 export const CANDIDATE_WINDOW_HOURS = 48;
-export const CANDIDATE_MIN_COSINE = 0.7;
+// Default floor 0.85: in the first event labelled, every `in` article was at or above 0.90 and nothing between 0.85 and
+// 0.90 was `in`. Wide mode goes down to 0.70 to spot-check for same-event articles far from the others.
+export const CANDIDATE_MIN_COSINE = 0.85;
+export const CANDIDATE_WIDE_MIN_COSINE = 0.7;
 export const CANDIDATE_LIMIT = 40;
 
 export type EventArticle = {
@@ -47,7 +50,13 @@ const toArticle = (r: ArticleRow): EventArticle => ({
   link: r.link,
 });
 
-export async function proposeCandidates(db: Db, eventId: string, limit = CANDIDATE_LIMIT): Promise<Candidate[]> {
+export async function proposeCandidates(
+  db: Db,
+  eventId: string,
+  opts: { wide?: boolean; limit?: number } = {},
+): Promise<Candidate[]> {
+  const minCosine = opts.wide ? CANDIDATE_WIDE_MIN_COSINE : CANDIDATE_MIN_COSINE;
+  const limit = opts.limit ?? CANDIDATE_LIMIT;
   const rows = (await db.execute(sql`
     WITH ins AS (
       SELECT a.embedding, a.first_published_at AS t
@@ -62,14 +71,14 @@ export async function proposeCandidates(db: Db, eventId: string, limit = CANDIDA
     WHERE f.excluded_reason IS NULL AND f.embedding IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM eval_event_articles x WHERE x.event_id = ${eventId} AND x.article_id = f.id)
     GROUP BY f.id
-    HAVING max(1 - (f.embedding <=> ins.embedding)) >= ${CANDIDATE_MIN_COSINE}
+    HAVING max(1 - (f.embedding <=> ins.embedding)) >= ${minCosine}
     ORDER BY similarity DESC, f.id
     LIMIT ${limit}
   `)) as unknown as (ArticleRow & { similarity: number })[];
   return rows.map((r) => ({ ...toArticle(r), similarity: Number(r.similarity) }));
 }
 
-export async function loadEvent(db: Db, eventId: string): Promise<LoadedEvent | null> {
+export async function loadEvent(db: Db, eventId: string, opts: { wide?: boolean } = {}): Promise<LoadedEvent | null> {
   const [event] = await db
     .select({ id: evalEvents.id, title: evalEvents.title, note: evalEvents.note, split: evalEvents.split })
     .from(evalEvents)
@@ -84,7 +93,7 @@ export async function loadEvent(db: Db, eventId: string): Promise<LoadedEvent | 
   `)) as unknown as (ArticleRow & { label: EventLabel; labeler: string })[];
   const labeled = labeledRows.map((r) => ({ ...toArticle(r), label: r.label, labeler: r.labeler }));
 
-  return { event, labeled, candidates: await proposeCandidates(db, eventId) };
+  return { event, labeled, candidates: await proposeCandidates(db, eventId, { wide: opts.wide }) };
 }
 
 export async function saveEventLabel(db: Db, eventId: string, articleId: string, label: EventLabel) {
