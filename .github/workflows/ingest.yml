@@ -3,13 +3,14 @@ name: Ingest feeds
 on:
   schedule:
     # Cadence lives here — edit this cron expression to change it.
-    - cron: "0 */6 * * *"
+    - cron: "0 6 * * *"
   workflow_dispatch: {}
 
-# After ingest, embed and cluster loop until nothing remains (scripts/ci/run-stage.sh), then /api/health
+# After ingest, embed loops until nothing remains (scripts/ci/run-stage.sh), then /api/health
 # fails the job if the pipeline is stale or stuck, so GitHub's failure notification fires.
-# Later steps use `if: always()` so one failing stage does not stop the others: already-embedded
-# articles still get clustered when embedding is down.
+# Clustering is paused (2026-11-09): to resume, add back a step running
+# `scripts/ci/run-stage.sh cluster` (with `if: always()`, before the health check) and set
+# CLUSTERING_PAUSED to false in lib/pipeline/health.ts.
 jobs:
   ingest:
     runs-on: ubuntu-latest
@@ -27,9 +28,6 @@ jobs:
       - name: Embed new articles
         if: always()
         run: scripts/ci/run-stage.sh embed
-      - name: Cluster embedded articles
-        if: always()
-        run: scripts/ci/run-stage.sh cluster
       - name: Check pipeline health
         if: always()
         run: scripts/ci/health.sh

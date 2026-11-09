@@ -179,6 +179,11 @@ Design: TDD D31–D37 (2026-10-05). Embeddings only find a candidate story; a cl
 - [x] Verify a stall is caught: run against a local dev server and a seeded local database (not production). Healthy: `/api/health` `200` and `scripts/ci/health.sh` exit 0. With the cluster stage's last run aged to 13h: `503` naming `cluster_freshness`, and `health.sh` exit 1 (the non-zero exit is what fails the workflow step); no secret: `401`. Aging the data stood in for lowering the thresholds, so no threshold code was touched. The workflow step itself has not run in Actions
 - [ ] Exit: 3 days unattended, no failed runs, within budget
 
+## Production pause (2026-11-09)
+
+- [x] Clustering paused in production to stop spending classifier tokens on joins v2 will replace. The workflow now runs daily (`0 6 * * *`) and calls ingest, then embed, then health; the cluster step is removed. `/api/cluster` stays deployed and can be called by hand. Health: `MAX_AGE_HOURS` is 36 for the daily cadence, and with `CLUSTERING_PAUSED = true` (`lib/pipeline/health.ts`) the cluster freshness, backlog and cluster-attempt checks are skipped
+- [ ] Resume: restore the cluster step in `.github/workflows/ingest.yml` (a comment there says how), set `CLUSTERING_PAUSED = false`, and restore the 6-hour cron if wanted. Articles ingested during the pause stay unclustered until then; v1 clusters them by first publish time when it resumes
+
 ## Not in this plan
 
 - Running a backfill or adding sources. The runbook is in the [TDD](tdd.md#backfill-and-adding-sources); only the endpoint parameters it needs are built here.
