@@ -42,74 +42,92 @@ async function healthy() {
   await run("embed");
   await run("cluster");
 }
-const check = async (name: string) => (await runHealthChecks(db)).checks.find((c) => c.name === name)!;
+const check = async (name: string) => (await runHealthChecks(db, { clusteringPaused: false })).checks.find((c) => c.name === name)!;
 
 describe("runHealthChecks", () => {
   it("is ok when everything is fresh", async () => {
     await healthy();
-    const h = await runHealthChecks(db);
+    const h = await runHealthChecks(db, { clusteringPaused: false });
     expect(h.ok).toBe(true);
     expect(h.checks.map((c) => c.name)).toEqual(["ingest_freshness", "embed_freshness", "cluster_freshness", "backlog", "stuck_rows"]);
     expect(h.checks.every((c) => c.ok)).toBe(true);
   });
 
   it("an empty database fails the freshness checks and passes backlog and stuck rows", async () => {
-    const h = await runHealthChecks(db);
+    const h = await runHealthChecks(db, { clusteringPaused: false });
     expect(h.ok).toBe(false);
     expect(h.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["ingest_freshness", "embed_freshness", "cluster_freshness"]);
   });
 
-  it("ingest freshness fails alone when the newest article is 12h old", async () => {
+  it("ingest freshness fails alone when the newest article is 36h old", async () => {
     await healthy();
-    await db.execute(sql`UPDATE feed_items SET created_at = now() - interval '13 hours'`);
-    const h = await runHealthChecks(db);
+    await db.execute(sql`UPDATE feed_items SET created_at = now() - interval '37 hours'`);
+    const h = await runHealthChecks(db, { clusteringPaused: false });
     expect(h.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["ingest_freshness"]);
   });
 
   it("embed freshness fails alone when the last successful embed run is old", async () => {
     await article();
-    await run("embed", { hoursAgo: 13 });
+    await run("embed", { hoursAgo: 37 });
     await run("cluster");
-    expect((await runHealthChecks(db)).checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["embed_freshness"]);
+    expect((await runHealthChecks(db, { clusteringPaused: false })).checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["embed_freshness"]);
   });
 
   it("cluster freshness fails alone when the last successful cluster run is old", async () => {
     await article();
     await run("embed");
-    await run("cluster", { hoursAgo: 13 });
-    expect((await runHealthChecks(db)).checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["cluster_freshness"]);
+    await run("cluster", { hoursAgo: 37 });
+    expect((await runHealthChecks(db, { clusteringPaused: false })).checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["cluster_freshness"]);
   });
 
   it("a recent failed or unfinished run does not count as fresh", async () => {
     await article();
     await run("embed");
-    await run("cluster", { hoursAgo: 13 });
+    await run("cluster", { hoursAgo: 37 });
     await run("cluster", { hoursAgo: 0.1, error: "boom" });
     await run("cluster", { hoursAgo: 0.1, unfinished: true });
     expect((await check("cluster_freshness")).ok).toBe(false);
   });
 
-  it("backlog fails alone when an unclustered article is 12h old, and passes when it is younger", async () => {
+  it("backlog fails alone when an unclustered article is 36h old, and passes when it is younger", async () => {
     await healthy();
-    await article({ ingestedHoursAgo: 11, clustered: false });
+    await article({ ingestedHoursAgo: 35, clustered: false });
     expect((await check("backlog")).ok).toBe(true);
-    await article({ ingestedHoursAgo: 13, clustered: false });
-    expect((await runHealthChecks(db)).checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["backlog"]);
+    await article({ ingestedHoursAgo: 37, clustered: false });
+    expect((await runHealthChecks(db, { clusteringPaused: false })).checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["backlog"]);
   });
 
   it("stuck rows fail alone, and are not also counted as backlog", async () => {
     await healthy();
-    await article({ ingestedHoursAgo: 20, clustered: false, attempts: 5 });
-    const h = await runHealthChecks(db);
+    await article({ ingestedHoursAgo: 40, clustered: false, attempts: 5 });
+    const h = await runHealthChecks(db, { clusteringPaused: false });
     expect(h.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["stuck_rows"]);
     expect((await check("stuck_rows")).detail).toContain("1 rows");
   });
 
   it("rows out of cluster attempts also fail stuck rows alone, and are not counted as backlog", async () => {
     await healthy();
-    await article({ ingestedHoursAgo: 20, clustered: false, clusterAttempts: 5 });
-    const h = await runHealthChecks(db);
+    await article({ ingestedHoursAgo: 40, clustered: false, clusterAttempts: 5 });
+    const h = await runHealthChecks(db, { clusteringPaused: false });
     expect(h.checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["stuck_rows"]);
     expect((await check("stuck_rows")).detail).toBe("0 rows out of embed attempts, 1 out of cluster attempts");
+  });
+});
+
+describe("runHealthChecks with clustering paused (the production default)", () => {
+  it("drops the cluster freshness, backlog and cluster-attempt checks", async () => {
+    await article();
+    await run("embed");
+    await article({ ingestedHoursAgo: 40, clustered: false, clusterAttempts: 5 });
+    const h = await runHealthChecks(db);
+    expect(h.ok).toBe(true);
+    expect(h.checks.map((c) => c.name)).toEqual(["ingest_freshness", "embed_freshness", "stuck_rows"]);
+  });
+
+  it("still fails on a missed embed run and on rows out of embed attempts", async () => {
+    await article();
+    await run("embed", { hoursAgo: 37 });
+    await article({ ingestedHoursAgo: 40, clustered: false, attempts: 5 });
+    expect((await runHealthChecks(db)).checks.filter((c) => !c.ok).map((c) => c.name)).toEqual(["embed_freshness", "stuck_rows"]);
   });
 });

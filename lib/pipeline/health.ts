@@ -5,7 +5,13 @@ import type { Db } from "@/db/types";
 import { MAX_CLUSTER_ATTEMPTS } from "./cluster";
 import { MAX_EMBED_ATTEMPTS } from "./embed";
 
-export const MAX_AGE_HOURS = 12;
+// Ingest and embed run once a day, so a stage is stale only after a missed run (24h cadence + slack).
+export const MAX_AGE_HOURS = 36;
+
+// Clustering is paused in production (2026-11-09): the workflow no longer calls /api/cluster, so its
+// freshness, the unclustered backlog and cluster-attempt exhaustion say nothing about health. Set to
+// false, and restore the "Cluster embedded articles" step in .github/workflows/ingest.yml, to resume.
+export const CLUSTERING_PAUSED = true;
 
 export type Check = { name: string; ok: boolean; detail: string };
 export type Health = { ok: boolean; checks: Check[] };
@@ -27,7 +33,8 @@ function freshness(name: string, ageHours: number | null, what: string): Check {
   return { name, ok: ageHours < MAX_AGE_HOURS, detail: `${what} ${fmt(ageHours)} ago (limit ${MAX_AGE_HOURS}h)` };
 }
 
-export async function runHealthChecks(db: Db): Promise<Health> {
+export async function runHealthChecks(db: Db, opts: { clusteringPaused?: boolean } = {}): Promise<Health> {
+  const paused = opts.clusteringPaused ?? CLUSTERING_PAUSED;
   const [row] = (await db.execute(sql`
     SELECT
       (SELECT extract(epoch FROM now() - max(created_at)) FROM feed_items) AS ingest_age,
@@ -40,20 +47,22 @@ export async function runHealthChecks(db: Db): Promise<Health> {
   `)) as unknown as Row[];
 
   const backlog = hours(row.backlog_age);
+  const stuck = paused ? row.stuck_embed : row.stuck_embed + row.stuck_cluster;
   const checks: Check[] = [
     freshness("ingest_freshness", hours(row.ingest_age), "newest article ingested"),
     freshness("embed_freshness", hours(row.embed_age), "last successful embed run"),
-    freshness("cluster_freshness", hours(row.cluster_age), "last successful cluster run"),
-    backlog === null
-      ? { name: "backlog", ok: true, detail: "no unclustered articles" }
-      : { name: "backlog", ok: backlog < MAX_AGE_HOURS, detail: `oldest unclustered article ingested ${fmt(backlog)} ago (limit ${MAX_AGE_HOURS}h)` },
+    ...(paused ? [] : [freshness("cluster_freshness", hours(row.cluster_age), "last successful cluster run")]),
+    ...(paused
+      ? []
+      : [
+          backlog === null
+            ? { name: "backlog", ok: true, detail: "no unclustered articles" }
+            : { name: "backlog", ok: backlog < MAX_AGE_HOURS, detail: `oldest unclustered article ingested ${fmt(backlog)} ago (limit ${MAX_AGE_HOURS}h)` },
+        ]),
     {
       name: "stuck_rows",
-      ok: row.stuck_embed === 0 && row.stuck_cluster === 0,
-      detail:
-        row.stuck_embed + row.stuck_cluster === 0
-          ? "none"
-          : `${row.stuck_embed} rows out of embed attempts, ${row.stuck_cluster} out of cluster attempts`,
+      ok: stuck === 0,
+      detail: stuck === 0 ? "none" : paused ? `${row.stuck_embed} rows out of embed attempts` : `${row.stuck_embed} rows out of embed attempts, ${row.stuck_cluster} out of cluster attempts`,
     },
   ];
   return { ok: checks.every((c) => c.ok), checks };
