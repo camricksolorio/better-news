@@ -37,3 +37,4 @@ kebab-case names. Add every new file to the index below.
 | [principles/layout-and-sizing.md](principles/layout-and-sizing.md) | How containers are sized: width from the layout, height from the content |
 | [components/story-card.md](components/story-card.md) | The story card on `/admin/stories` |
 | [components/event-labelling.md](components/event-labelling.md) | The event labelling pages on `/admin/events` |
+| [components/v2-clusters.md](components/v2-clusters.md) | The v2 cluster viewer on `/admin/v2` |

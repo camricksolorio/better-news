@@ -34,7 +34,7 @@ export function reportRun(
     scores,
     summary: summarizeEvents(scores),
     pairs: computeMetrics(run.clusterOf, [...byKey.values()]),
-    retrieval: run.candidatePairs ? retrievalRecall(events, run.candidatePairs) : null,
+    retrieval: run.candidatePairs ? retrievalRecall(events, run.candidatePairs, new Set(run.clusterOf.keys())) : null,
     stories: new Set(run.clusterOf.values()).size,
   };
 }

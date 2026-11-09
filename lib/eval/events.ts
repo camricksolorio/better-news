@@ -133,13 +133,14 @@ export function derivePairLabels(events: EvalEvent[]): PairLabel[] {
 }
 
 // Share of the in×in pairs that the retrieval step proposed as candidate pairs ("a|b", ordered by guid). A pair
-// that was never a candidate can never be judged, so this bounds what any later step can recover.
-export function retrievalRecall(events: EvalEvent[], candidatePairs: Set<string>) {
+// that was never a candidate can never be judged, so this bounds what any later step can recover. `present` limits it to
+// articles that were in the replay: an in article added after the snapshot was taken cannot be retrieved by anything.
+export function retrievalRecall(events: EvalEvent[], candidatePairs: Set<string>, present?: Set<string>) {
   let pairs = 0;
   let found = 0;
   for (const e of events) {
     if (!e.humanLabeled) continue;
-    const ins = [...e.labels].filter(([, l]) => l === "in").map(([g]) => g).sort();
+    const ins = [...e.labels].filter(([g, l]) => l === "in" && (!present || present.has(g))).map(([g]) => g).sort();
     for (let i = 0; i < ins.length; i++) {
       for (let j = i + 1; j < ins.length; j++) {
         pairs++;

@@ -20,6 +20,7 @@
     "eval:snapshot": "tsx --env-file=.env --tsconfig tsconfig.json scripts/snapshot.ts",
     "eval:event-sample": "tsx --env-file=.env --tsconfig tsconfig.json scripts/event-sample.ts",
     "eval:events": "tsx --env-file=.env --tsconfig tsconfig.json scripts/eval-events.ts",
+    "eval:v2-dump": "tsx --env-file=.env --tsconfig tsconfig.json scripts/v2-dump.ts",
     "eval:cluster": "tsx --env-file=.env --tsconfig tsconfig.json scripts/eval-cluster.ts",
     "usage": "tsx --env-file=.env --tsconfig tsconfig.json scripts/usage.ts",
     "eval:pairs": "tsx --tsconfig tsconfig.json scripts/generate-pairs.ts",

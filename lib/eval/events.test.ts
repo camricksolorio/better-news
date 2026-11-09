@@ -111,6 +111,11 @@ describe("retrievalRecall", () => {
     expect(retrievalRecall([e], new Set())).toEqual({ pairs: 3, found: 0, recall: 0 });
   });
 
+  it("leaves out in articles that were not in the replay", () => {
+    const e = event({ a1: "in", a2: "in", a3: "in" });
+    expect(retrievalRecall([e], new Set(["a1|a2"]), new Set(["a1", "a2"]))).toEqual({ pairs: 1, found: 1, recall: 1 });
+  });
+
   it("is null when there are no pairs to find", () => {
     expect(retrievalRecall([], new Set())).toEqual({ pairs: 0, found: 0, recall: null });
   });
