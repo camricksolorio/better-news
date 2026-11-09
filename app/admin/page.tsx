@@ -19,6 +19,9 @@ export default async function AdminHome() {
           <a href="/admin/explore" className="underline">Clustering explorer</a>: replay the snapshot at any thresholds (no API calls)
         </li>
         <li>
+          <a href="/admin/v2" className="underline">v2 clusters</a>: the stories v2 built from cached verdicts, and where each labelled event&apos;s pairs ended up
+        </li>
+        <li>
           <a href="/admin/label" className="underline">Label pairs</a>: judge same / related / different (the eval ground truth)
         </li>
         <li>
